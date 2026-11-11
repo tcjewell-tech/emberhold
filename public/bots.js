@@ -135,7 +135,8 @@ export function botInput(s, i, spend = true) {
   let goal = post(h.team, HERO_IDS.indexOf(h.kind)), stopAt = 12, wreck = null, fixed = hurt;
   const raider = (h.kind === 'anvil' || h.kind === 'dart') && s.wave >= 1;
   // Raiders are far from help, so they turn for home at half health rather than a third.
-  const roam = !defend && h.hp >= h.max * (raider ? 0.5 : 0.35) && s.timer > gap(h, em) / def.speed + 3;
+  const exposed = h.shieldMax > 0 && h.shield === 0 && h.hp < h.max * 0.75; // shield broken: step out and let it refill
+  const roam = !defend && !exposed && h.hp >= h.max * (raider ? 0.5 : 0.35) && s.timer > gap(h, em) / def.speed + 3;
   const mates = s.heroes.filter((o) => o.team === h.team && o.alive && o !== h);
   const medic = mates.find((o) => o.kind === 'patch');
   const patient = h.kind === 'patch' && !hurt ? mates.filter((o) => o.hp < o.max * 0.6 && gap(h, o) < 500).sort((a, c) => a.hp / a.max - c.hp / c.max)[0] : null;

@@ -36,7 +36,8 @@ const ULT_PER_HEAL = 0.4;
 export const HERO_IDS = ['anvil', 'dart', 'patch', 'cog'];
 export const HEROES = {
   anvil: {
-    name: 'Anvil', role: 'Vanguard', hp: 300, speed: 165, passive: 'Most health',
+    name: 'Anvil', role: 'Vanguard', hp: 300, speed: 165, passive: 'Shield: soaks 100 damage, refills after 4 s unhurt',
+    shield: { max: 100, delay: 4, rate: 25 },
     gun: { name: 'Scattergun', dmg: 10, pellets: 6, spread: 0.3, rate: 1.1, range: 320, speed: 720 },
     q: { name: 'Shockwave', cd: 8, r: 120, dmg: 20, push: 90, stun: 1.5, text: 'Knock back and stun nearby hostiles' },
     r: { name: 'Fortify', time: 6, taken: 0.25, taunt: 320, text: '6 s: take 75% less damage, nearby AI enemies target you' },
@@ -104,10 +105,10 @@ export function createGame(seed = 1) {
   };
   for (let team = 0; team < TEAMS.length; team++) {
     HERO_IDS.forEach((kind, k) => {
-      const hp = HEROES[kind].hp;
+      const hp = HEROES[kind].hp, shield = HEROES[kind].shield?.max ?? 0;
       s.heroes.push({
         i: team * 4 + k, team, kind, ...post(team, k), aim: 0, hp, max: hp, alive: true, out: false, respawn: 0,
-        fireCd: 0, qCd: 0, ult: 0, fortify: 0, overdrive: 0, stun: 0, scav: 0, scavId: 0,
+        shield, shieldMax: shield, shieldCd: 0, fireCd: 0, qCd: 0, ult: 0, fortify: 0, overdrive: 0, stun: 0, scav: 0, scavId: 0,
         stats: { dmg: 0, heal: 0, scrap: 0, kills: 0, pvp: 0, deaths: 0 },
       });
     });
@@ -277,8 +278,11 @@ function hurtEnemy(s, e, dmg, team, owner) {
 function hurtHero(s, h, dmg, team, owner) {
   if (!h.alive) return;
   if (h.fortify > 0) dmg *= HEROES.anvil.r.taken;
-  credit(s, owner, Math.min(dmg, h.hp));
-  h.hp -= dmg;
+  credit(s, owner, Math.min(dmg, h.hp + h.shield));
+  if (h.shieldMax) h.shieldCd = HEROES[h.kind].shield.delay; // any hit, absorbed or not, restarts the wait
+  const soaked = Math.min(h.shield, dmg);
+  h.shield -= soaked;
+  h.hp -= dmg - soaked;
   if (h.hp > 0) return;
   Object.assign(h, { hp: 0, alive: false, respawn: RESPAWN, fortify: 0, overdrive: 0, stun: 0, scav: 0, scavId: 0 });
   h.stats.deaths++;
@@ -313,7 +317,7 @@ function heal(src, o, amount, charges) {
 
 function revive(h, atEmber) {
   if (atEmber) Object.assign(h, post(h.team, HERO_IDS.indexOf(h.kind)));
-  Object.assign(h, { alive: true, hp: h.max, respawn: 0 });
+  Object.assign(h, { alive: true, hp: h.max, shield: h.shieldMax, shieldCd: 0, respawn: 0 });
 }
 
 function eliminate(s, k) {
@@ -467,6 +471,8 @@ function updateHero(s, h, raw, dt) {
   h.qCd = Math.max(0, h.qCd - dt);
   h.fortify = Math.max(0, h.fortify - dt);
   h.overdrive = Math.max(0, h.overdrive - dt);
+  h.shieldCd = Math.max(0, h.shieldCd - dt);
+  if (h.shieldCd === 0 && h.shield < h.shieldMax) h.shield = Math.min(h.shieldMax, h.shield + HEROES[h.kind].shield.rate * dt);
   if (h.stun > 0) {
     h.stun = Math.max(0, h.stun - dt);
     h.scav = 0;

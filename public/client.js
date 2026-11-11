@@ -193,7 +193,7 @@ function hud() {
     width(row, o.hp / o.max);
   });
 
-  $('meHp').textContent = h.out ? 'Out' : h.alive ? `${Math.ceil(h.hp)} / ${h.max}` : `Back in ${Math.ceil(h.respawn)}s`;
+  $('meHp').textContent = h.out ? 'Out' : h.alive ? `${Math.ceil(h.hp)} / ${h.max}${h.shieldMax ? ` + ${Math.ceil(h.shield)} shield` : ''}` : `Back in ${Math.ceil(h.respawn)}s`;
   width($('hp'), h.hp / h.max);
   $('q').classList.toggle('ready', h.alive && h.qCd <= 0);
   $('q').lastChild.textContent = h.qCd > 0 ? `${h.qCd.toFixed(1)}s` : 'Ready';
@@ -538,9 +538,10 @@ function drawHero(h) {
   if (h.overdrive > 0) ring(HERO_R + 7, '#ff7ad9');
   if (h.stun > 0) ring(HERO_R + 4, '#7fa8ff');
   healthBar(x - 18, y - 28, 36, h.hp / h.max, color);
+  if (h.shieldMax) healthBar(x - 18, y - 33, 36, h.shield / h.shieldMax, '#9fd0ff');
   ctx.fillStyle = '#cfd8e8';
   ctx.font = '11px system-ui, sans-serif';
-  ctx.fillText(HEROES[h.kind].name, x, y - 38);
+  ctx.fillText(HEROES[h.kind].name, x, y - (h.shieldMax ? 43 : 38));
 }
 
 function drawShot(sh) {

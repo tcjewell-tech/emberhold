@@ -78,7 +78,7 @@ test('bots fight rival heroes they meet', () => {
   assert.equal(botInput(g, theirs.i).fire, true, 'both open fire on sight');
   for (let n = 0; n < 180; n++) S.step(g, { [mine.i]: botInput(g, mine.i), [theirs.i]: botInput(g, theirs.i) }, DT);
   // Only the Anvil is sure to be hurt: a Dart backs away faster than Scattergun pellets can reach it.
-  assert.ok(theirs.hp < theirs.max);
+  assert.ok(theirs.shield < theirs.shieldMax);
   assert.ok(gap(mine, theirs) > 200, 'the Dart keeps its distance');
 });
 
@@ -253,4 +253,15 @@ test('a raider turns for home at half health', () => {
   assert.ok(heading(botInput(g, anvil.i), anvil, rival) > 0.9, 'healthy: presses on');
   anvil.hp = anvil.max * 0.45;
   assert.ok(heading(botInput(g, anvil.i), anvil, em) > 0.9, 'hurt: heads back');
+});
+
+test('a raiding Anvil whose shield is broken pulls back to let it refill', () => {
+  const g = quiet();
+  g.wave = 1;
+  const em = g.teams[0].ember, rival = g.teams[1].ember;
+  const anvil = place(g.heroes[AMBER + ANVIL], (em.x + rival.x) / 2, (em.y + rival.y) / 2);
+  anvil.hp = anvil.max * 0.7;
+  assert.ok(heading(botInput(g, anvil.i), anvil, rival) > 0.9, 'shield up: presses on');
+  anvil.shield = 0;
+  assert.ok(heading(botInput(g, anvil.i), anvil, em) > 0.9, 'shield down: backs off');
 });

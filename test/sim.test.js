@@ -110,7 +110,7 @@ test('there is no friendly fire', () => {
 test('a rival hero can be shot down, pays a bounty, and respawns at their own Ember', () => {
   const g = arena();
   const me = place(g.heroes[AMBER + DART], MID.x, MID.y);
-  const rival = place(g.heroes[AZURE + ANVIL], MID.x + 100, MID.y);
+  const rival = place(g.heroes[AZURE + COG], MID.x + 100, MID.y);
   const before = g.teams[0].scrap;
   run(g, 6, { [AMBER + DART]: { aim: 0, fire: true } });
   assert.equal(rival.alive, false);
@@ -278,7 +278,7 @@ test('Fortify cuts damage taken by 75%', () => {
   run(g, DT, { [AMBER + ANVIL]: { r: true } });
   S.spawnEnemy(g, 'skitter', 0, MID.x + 20, MID.y);
   run(g, 0.2);
-  assert.equal(anvil.max - anvil.hp, S.ENEMIES.skitter.dmg * 0.25);
+  assert.equal(anvil.shieldMax - anvil.shield, S.ENEMIES.skitter.dmg * 0.25);
 });
 
 test('Fortify pulls in AI enemies that would otherwise walk past', () => {
@@ -339,7 +339,7 @@ test('Overclock makes Turrets fire about twice as fast', () => {
   const dealt = (overclock) => {
     const g = arena();
     S.addStruct(g, 'turret', 0, MID.cx, MID.cy);
-    const rival = place(g.heroes[AZURE + ANVIL], MID.x + 150, MID.y);
+    const rival = place(g.heroes[AZURE + COG], MID.x + 150, MID.y);
     if (overclock) g.heroes[AMBER + COG].ult = 100;
     run(g, 2, { [AMBER + COG]: { r: true } });
     return rival.max - rival.hp;
@@ -433,13 +433,13 @@ test('Cog builds for 25% less', () => {
 test('removing your own structure refunds half its cost, scaled by its health', () => {
   const g = arena();
   place(g.heroes[AMBER + ANVIL], MID.x, MID.y);
-  place(g.heroes[AZURE + ANVIL], MID.x, MID.y + 40);
+  place(g.heroes[AZURE + COG], MID.x, MID.y + 40);
   const T = g.teams[0];
   const whole = S.addStruct(g, 'wall', 0, MID.cx + 1, MID.cy);
   const dented = S.addStruct(g, 'wall', 0, MID.cx + 2, MID.cy);
   dented.hp = dented.max / 2;
 
-  run(g, DT, { [AZURE + ANVIL]: { remove: { cx: whole.cx, cy: whole.cy } } });
+  run(g, DT, { [AZURE + COG]: { remove: { cx: whole.cx, cy: whole.cy } } });
   assert.equal(g.structs.length, 2, 'a rival cannot remove it');
 
   const before = T.scrap;
@@ -487,7 +487,7 @@ test('a Turret shoots rival heroes and AI enemies, never teammates', () => {
   const g = arena();
   S.addStruct(g, 'turret', 0, MID.cx, MID.cy);
   const mate = place(g.heroes[AMBER + DART], MID.x + 60, MID.y);
-  const rival = place(g.heroes[AZURE + ANVIL], MID.x - 120, MID.y);
+  const rival = place(g.heroes[AZURE + COG], MID.x - 120, MID.y);
   const e = S.spawnEnemy(g, 'breaker', 2, MID.x, MID.y + 200);
   e.stun = 100;
   run(g, 1.5);
@@ -503,7 +503,7 @@ test('Spikes hurt AI enemies and rival heroes standing on them, then wear out', 
   const spikes = S.addStruct(g, 'spikes', 0, MID.cx, MID.cy);
   const e = S.spawnEnemy(g, 'breaker', 2, MID.x, MID.y);
   e.stun = 100;
-  const rival = place(g.heroes[AZURE + ANVIL], MID.x + 5, MID.y + 5);
+  const rival = place(g.heroes[AZURE + COG], MID.x + 5, MID.y + 5);
   const mate = place(g.heroes[AMBER + DART], MID.x - 5, MID.y - 5);
   run(g, 1);
   assert.ok(e.hp < e.max);
@@ -551,7 +551,7 @@ test('clearing the night brings dawn: Walls repaired, fresh wrecks, Embers not h
 test('the same seed and inputs always produce the same match', () => {
   const script = (g) => ({
     [AMBER + DART]: { mx: Math.cos(g.t), my: Math.sin(g.t), aim: g.t, fire: true },
-    [AZURE + ANVIL]: { mx: -1, my: -1, aim: 4, fire: true, q: true },
+    [AZURE + COG]: { mx: -1, my: -1, aim: 4, fire: true, q: true },
     [JADE + COG]: { q: true, build: { type: 'wall', cx: 25, cy: 60 } },
   });
   const play = (seed) => {
@@ -586,4 +586,51 @@ test('a snapshot is JSON for the client, with a count in place of the spawn queu
   assert.equal(snap.spawn, undefined);
   assert.equal(snap.pending, g.spawn.length);
   assert.ok(snap.pending > 0);
+});
+
+// ---------------------------------------------------------------- Anvil's shield
+
+test('only Anvil carries a shield, and it soaks damage before health does', () => {
+  const g = arena();
+  assert.deepEqual(g.heroes.slice(0, 4).map((h) => h.shieldMax), [S.HEROES.anvil.shield.max, 0, 0, 0]);
+  const anvil = place(g.heroes[AMBER + ANVIL], MID.x, MID.y);
+  S.spawnEnemy(g, 'skitter', 0, MID.x + 20, MID.y);
+  run(g, 0.2);
+  assert.equal(anvil.shield, anvil.shieldMax - S.ENEMIES.skitter.dmg);
+  assert.equal(anvil.hp, anvil.max);
+});
+
+test('a hit bigger than the shield spills into health', () => {
+  const g = arena();
+  const anvil = place(g.heroes[AMBER + ANVIL], MID.x, MID.y);
+  Object.assign(anvil, { shield: 3, shieldCd: 1 }); // hit a moment ago, so not refilling
+  S.spawnEnemy(g, 'skitter', 0, MID.x + 20, MID.y);
+  run(g, 0.2);
+  assert.equal(anvil.shield, 0);
+  assert.equal(anvil.hp, anvil.max - (S.ENEMIES.skitter.dmg - 3));
+});
+
+test('the shield refills only after a spell without taking damage', () => {
+  const g = arena();
+  const anvil = place(g.heroes[AMBER + ANVIL], MID.x, MID.y);
+  const { delay, rate } = S.HEROES.anvil.shield;
+  S.spawnEnemy(g, 'skitter', 0, MID.x + 20, MID.y);
+  run(g, 0.2);
+  g.enemies = [];
+  anvil.shield = 0;
+  run(g, delay - 0.5);
+  assert.equal(anvil.shield, 0, 'still waiting');
+  run(g, 1.5);
+  assert.ok(Math.abs(anvil.shield - rate) < rate * 0.4, `about one second of refill, got ${anvil.shield}`);
+  run(g, 10);
+  assert.equal(anvil.shield, anvil.shieldMax, 'and it stops at full');
+});
+
+test('a respawned Anvil comes back with a full shield', () => {
+  const g = arena();
+  const anvil = g.heroes[AMBER + ANVIL];
+  Object.assign(anvil, { alive: false, hp: 0, shield: 0, respawn: 0.1 });
+  run(g, 0.2);
+  assert.equal(anvil.alive, true);
+  assert.equal(anvil.shield, anvil.shieldMax);
 });
