@@ -1,0 +1,168 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import * as S from '../public/sim.js';
+import { botInput } from '../public/bots.js';
+
+const DT = 1 / 60;
+const AMBER = 0, AZURE = 4;
+const ANVIL = 0, DART = 1, PATCH = 2;
+const MID = { x: 1820, y: 1500 };
+const gap = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const place = (h, x, y) => Object.assign(h, { x, y });
+const squad = (g, team) => g.heroes.filter((h) => h.team === team);
+
+/** Every hero played by a bot. */
+function play(g, seconds, { spend = true, until, each } = {}) {
+  for (let n = Math.round(seconds / DT); n > 0 && !(until && until(g)); n--) {
+    S.step(g, g.heroes.map((h) => botInput(g, h.i, spend)), DT);
+    if (each) each(g, n);
+  }
+  return g;
+}
+
+/** Things that must hold in every state of every match. */
+function assertSane(g) {
+  const at = ` (t=${g.t.toFixed(1)}s, wave ${g.wave})`;
+  const inWorld = (o) => o.x >= 0 && o.y >= 0 && o.x <= S.WORLD.w && o.y <= S.WORLD.h;
+  for (const h of g.heroes) {
+    assert.ok([h.x, h.y, h.aim, h.hp, h.ult].every(Number.isFinite), `hero ${h.i} has a non-number${at}`);
+    assert.ok(h.hp >= 0 && h.hp <= h.max && h.ult >= 0 && h.ult <= 100 && inWorld(h), `hero ${h.i} out of range${at}`);
+    assert.ok(h.alive ? h.hp > 0 : h.hp === 0, `hero ${h.i} alive/hp mismatch${at}`);
+  }
+  for (const e of g.enemies) assert.ok(Number.isFinite(e.x + e.y + e.hp) && e.hp > 0 && e.hp <= e.max && inWorld(e), `bad enemy ${JSON.stringify(e)}${at}`);
+  for (const sh of g.shots) assert.ok(Number.isFinite(sh.x + sh.y + sh.vx + sh.vy), `bad shot${at}`);
+  for (const T of g.teams) {
+    assert.ok(Number.isInteger(T.scrap) && T.scrap >= 0, `Scrap ${T.scrap}${at}`);
+    assert.ok(T.ember.hp >= 0 && T.ember.hp <= T.ember.max, `Ember hp ${T.ember.hp}${at}`);
+    assert.equal(T.alive, T.ember.hp > 0, `Ember alive/hp mismatch${at}`);
+  }
+  const cells = new Set(g.structs.map((st) => st.cy * S.COLS + st.cx));
+  assert.equal(cells.size, g.structs.length, `two structures share a cell${at}`);
+  for (const st of g.structs) assert.ok(st.hp > 0 && st.hp <= st.max && g.teams[st.team].alive, `bad structure ${JSON.stringify(st)}${at}`);
+}
+
+test('bots scavenge by day and are back at their Ember by nightfall', () => {
+  const g = play(S.createGame(1), S.DAY_LENGTH + 1, { until: (g) => g.phase === 'night' });
+  assert.equal(g.phase, 'night');
+  for (let team = 0; team < 3; team++) {
+    assert.ok(squad(g, team).reduce((n, h) => n + h.stats.scrap, 0) > 0, `team ${team} gathered Scrap`);
+  }
+  for (const h of g.heroes) assert.ok(gap(h, g.teams[h.team].ember) < 300, `hero ${h.i} is home`);
+});
+
+test('bots hold their Embers through the first night', () => {
+  const g = play(S.createGame(2), 240, { until: (g) => g.wave === 1 && g.phase === 'day' });
+  assert.equal(g.phase, 'day');
+  assert.ok(g.teams.every((T) => T.alive));
+  for (let team = 0; team < 3; team++) {
+    assert.ok(squad(g, team).reduce((n, h) => n + h.stats.kills, 0) > 0, `team ${team} got kills`);
+  }
+});
+
+test('a bot Cog fortifies an all-bot base, but never spends a human team\'s Scrap', () => {
+  const built = play(S.createGame(1), S.DAY_LENGTH - 5);
+  for (let team = 0; team < 3; team++) assert.ok(built.structs.some((st) => st.team === team && st.ttl === 0), `team ${team} built`);
+
+  const saved = play(S.createGame(1), S.DAY_LENGTH - 5, { spend: false });
+  assert.equal(saved.structs.filter((st) => st.ttl === 0).length, 0);
+  assert.ok(saved.teams.every((T) => T.scrap >= S.START_SCRAP));
+});
+
+test('bots fight rival heroes they meet', () => {
+  const g = S.createGame(1);
+  g.timer = 1e9;
+  g.wrecks = [];
+  const mine = place(g.heroes[AMBER + DART], MID.x, MID.y);
+  const theirs = place(g.heroes[AZURE + ANVIL], MID.x + 200, MID.y);
+  assert.equal(botInput(g, mine.i).fire, true);
+  assert.equal(botInput(g, theirs.i).fire, true, 'both open fire on sight');
+  for (let n = 0; n < 180; n++) S.step(g, { [mine.i]: botInput(g, mine.i), [theirs.i]: botInput(g, theirs.i) }, DT);
+  // Only the Anvil is sure to be hurt: a Dart backs away faster than Scattergun pellets can reach it.
+  assert.ok(theirs.hp < theirs.max);
+  assert.ok(gap(mine, theirs) > 200, 'the Dart keeps its distance');
+});
+
+test('Anvil and Dart bots set out to raid a rival Ember once the first night is over', () => {
+  const firstDay = play(S.createGame(1), 5);
+  const later = S.createGame(1);
+  later.wave = 1;
+  play(later, 5);
+  for (const k of [ANVIL, DART]) {
+    const nearestRival = (g) => Math.min(gap(g.heroes[AMBER + k], g.teams[1].ember), gap(g.heroes[AMBER + k], g.teams[2].ember));
+    assert.ok(nearestRival(later) < nearestRival(firstDay) - 200, `hero ${k} closed on a rival Ember`);
+  }
+  assert.ok(gap(later.heroes[AMBER + PATCH], later.teams[0].ember) < 900, 'Patch stays near home');
+});
+
+/** Which rival Ember (team index) a team's Anvil bot is walking towards. */
+function raidTarget(g, team) {
+  const anvil = g.heroes[team * 4 + ANVIL], input = botInput(g, anvil.i);
+  const toward = (k) => {
+    const em = g.teams[k].ember, d = gap(anvil, em);
+    return (input.mx * (em.x - anvil.x) + input.my * (em.y - anvil.y)) / d;
+  };
+  const [a, b] = [0, 1, 2].filter((k) => k !== team);
+  return toward(a) > toward(b) ? a : b;
+}
+
+test('with the Embers level, each team raids a different rival', () => {
+  const g = S.createGame(1);
+  g.wave = 1;
+  assert.deepEqual([0, 1, 2].map((team) => raidTarget(g, team)), [1, 2, 0]);
+});
+
+test('a badly hurt Ember draws both rivals', () => {
+  const g = S.createGame(1);
+  g.wave = 1;
+  g.teams[0].ember.hp *= 0.5;
+  assert.equal(raidTarget(g, 1), 0);
+  assert.equal(raidTarget(g, 2), 0);
+});
+
+test('a raiding bot in range of a rival Ember shoots at it', () => {
+  const g = S.createGame(1);
+  g.wave = 1;
+  g.wrecks = [];
+  const az = g.teams[1].ember;
+  g.heroes.slice(AZURE, AZURE + 4).forEach((h) => place(h, 300, 300));
+  const dart = place(g.heroes[AMBER + DART], az.x - 400, az.y);
+  S.addStruct(g, 'wall', 1, Math.floor(dart.x / S.CELL) + 2, Math.floor(dart.y / S.CELL) + 3); // nearer, but off the line
+  const input = botInput(g, dart.i);
+  assert.equal(input.fire, true);
+  assert.ok(Math.abs(input.aim) < 0.01, 'aims straight at the Ember, not at the nearest Wall');
+});
+
+test('the Patch bot mends a hurt teammate standing next to it', () => {
+  const g = S.createGame(1);
+  const patch = g.heroes[AMBER + PATCH], mate = g.heroes[AMBER + DART];
+  place(mate, patch.x + 20, patch.y);
+  assert.equal(botInput(g, patch.i).q, false);
+  mate.hp = mate.max * 0.3;
+  assert.equal(botInput(g, patch.i).q, true);
+});
+
+for (const seed of [1, 2, 3]) {
+  test(`soak: twelve bots play seed ${seed} to the end without breaking the match`, (t) => {
+    const g = S.createGame(seed);
+    const CAP_MINUTES = 40;
+    let biggest = 0;
+    const started = performance.now();
+    play(g, CAP_MINUTES * 60, {
+      until: (g) => g.phase === 'over',
+      each: (g, n) => {
+        if (n % 20 === 0) assertSane(g);
+        if (n % 600 === 0) biggest = Math.max(biggest, S.snapshot(g).length);
+      },
+    });
+    assertSane(g);
+    assert.equal(g.phase, 'over', `match still running after ${CAP_MINUTES} simulated minutes`);
+    assert.ok(g.winner >= -1 && g.winner <= 2);
+    const pvp = g.heroes.reduce((n, h) => n + h.stats.pvp, 0);
+    const winner = g.winner < 0 ? 'draw' : `Team ${S.TEAMS[g.winner].name} wins`;
+    t.diagnostic(
+      `seed ${seed}: ${winner} on wave ${g.wave} after ${(g.t / 60).toFixed(1)} simulated min; ` +
+        `${pvp} hero-vs-hero kills; biggest snapshot ${(biggest / 1024).toFixed(1)} KB; ` +
+        `${((performance.now() - started) / g.t).toFixed(2)} ms of CPU per simulated second`,
+    );
+  });
+}

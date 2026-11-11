@@ -1,0 +1,15 @@
+{
+  "name": "emberhold",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Three-team PvPvE wave-defense hero shooter",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "lan": "node server.js --lan",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "dependencies": {
+    "ws": "^8.22.2"
+  }
+}
