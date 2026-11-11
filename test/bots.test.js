@@ -166,3 +166,91 @@ for (const seed of [1, 2, 3]) {
     );
   });
 }
+
+// ---------------------------------------------------------------- smarter decisions
+
+/** A quiet daytime match with no wrecks, for asking one bot what it would do. */
+function quiet() {
+  const g = S.createGame(1);
+  g.timer = 1e9;
+  g.wrecks = [];
+  return g;
+}
+/** How directly an input walks from a hero towards a point: 1 straight at it, -1 straight away, 0 standing still. */
+const heading = (input, h, p) => (input.mx * (p.x - h.x) + input.my * (p.y - h.y)) / (gap(h, p) || 1);
+
+test('a bot finishes off the weakest hostile in range rather than the nearest', () => {
+  const g = quiet();
+  const dart = place(g.heroes[AMBER + DART], MID.x, MID.y);
+  S.spawnEnemy(g, 'breaker', 0, MID.x + 100, MID.y);
+  const weak = S.spawnEnemy(g, 'breaker', 0, MID.x, MID.y + 250);
+  weak.hp = 5;
+  const input = botInput(g, dart.i);
+  assert.equal(input.fire, true);
+  assert.ok(Math.abs(input.aim - Math.PI / 2) < 0.01, `aim ${input.aim}`);
+});
+
+test('a raider picks off a rival Turret from outside its reach', () => {
+  const g = quiet();
+  g.wave = 1;
+  g.heroes.slice(AZURE, AZURE + 4).forEach((h) => place(h, 300, 300));
+  const turret = S.addStruct(g, 'turret', 1, 60, 59); // west of Azure's Ember
+  const anvil = g.heroes[AMBER + ANVIL];
+  assert.ok(S.HEROES.anvil.gun.range > S.STRUCTS.turret.range, 'the Scattergun outranges a Turret');
+
+  place(anvil, turret.x - 250, turret.y); // inside the Turret's reach
+  let input = botInput(g, anvil.i);
+  assert.equal(input.fire, true);
+  assert.ok(Math.abs(input.aim) < 0.01, 'aims at the Turret');
+  assert.ok(heading(input, anvil, turret) < -0.9, 'backs out of its reach');
+
+  place(anvil, turret.x - (S.STRUCTS.turret.range + 20), turret.y); // out of its reach, inside our own
+  input = botInput(g, anvil.i);
+  assert.equal(input.fire, true);
+  assert.ok(Math.abs(input.aim) < 0.01);
+  assert.equal(Math.hypot(input.mx, input.my), 0, 'holds there');
+});
+
+test('by day, bots near home run back when their Ember is attacked', () => {
+  const g = quiet();
+  const em = g.teams[0].ember;
+  const patch = place(g.heroes[AMBER + PATCH], em.x, em.y + 700);
+  g.wrecks.push({ id: 9001, x: em.x, y: em.y + 850, scrap: 20 });
+  assert.ok(heading(botInput(g, patch.i), patch, g.wrecks[0]) > 0.9, 'normally it goes for the wreck');
+  place(g.heroes[AZURE + DART], em.x + 200, em.y);
+  assert.ok(heading(botInput(g, patch.i), patch, em) > 0.9, 'with a raider at the Ember it heads home');
+});
+
+test('a badly hurt bot under attack falls back to its Patch', () => {
+  const g = quiet();
+  g.phase = 'night';
+  const em = g.teams[0].ember;
+  const dart = place(g.heroes[AMBER + DART], em.x + 150, em.y);
+  const patch = place(g.heroes[AMBER + PATCH], em.x - 150, em.y);
+  S.spawnEnemy(g, 'skitter', 0, em.x + 400, em.y);
+  dart.hp = dart.max * 0.2;
+  const input = botInput(g, dart.i);
+  assert.ok(heading(input, dart, patch) > 0.9);
+  assert.equal(input.fire, true, 'still shooting as it goes');
+});
+
+test('the Patch bot goes to a hurt teammate', () => {
+  const g = quiet();
+  g.phase = 'night';
+  const em = g.teams[0].ember;
+  const patch = place(g.heroes[AMBER + PATCH], em.x - 150, em.y);
+  const mate = place(g.heroes[AMBER + ANVIL], em.x + 150, em.y + 100);
+  assert.ok(heading(botInput(g, patch.i), patch, mate) < 0.9, 'not while everyone is healthy');
+  mate.hp = mate.max * 0.4;
+  assert.ok(heading(botInput(g, patch.i), patch, mate) > 0.9);
+});
+
+test('a raider turns for home at half health', () => {
+  const g = quiet();
+  g.wave = 1;
+  const em = g.teams[0].ember, rival = g.teams[1].ember;
+  const anvil = place(g.heroes[AMBER + ANVIL], (em.x + rival.x) / 2, (em.y + rival.y) / 2);
+  assert.ok(heading(botInput(g, anvil.i), anvil, rival) > 0.9, 'healthy: presses on');
+  anvil.hp = anvil.max * 0.45;
+  assert.ok(heading(botInput(g, anvil.i), anvil, em) > 0.9, 'hurt: heads back');
+});

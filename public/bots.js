@@ -1,6 +1,6 @@
 // Bot heroes. botInput() looks at the match and returns the same input object a human
 // client sends, so bots play by exactly the rules players do. It keeps no memory.
-import { HEROES, HERO_IDS, TEAMS, CELL, EMBER_R, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, post, structAt, nearestHostile } from './sim.js';
+import { HEROES, HERO_IDS, STRUCTS, TEAMS, CELL, EMBER_R, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, post, structAt, nearestHostile } from './sim.js';
 
 const SIGHT = 520;
 const LEASH = 280; // how far from their Ember bots will chase at night
@@ -93,6 +93,28 @@ function rivalThing(s, h, range) {
   return best;
 }
 
+/** The hostile unit in range with the least health left: bots finish what they start. */
+function weakestHostile(s, h, range) {
+  let best = null;
+  for (const o of [...s.enemies, ...s.heroes]) {
+    if (o.i !== undefined && (!o.alive || o.team === h.team)) continue;
+    if (gap(h, o) <= range && (!best || o.hp < best.hp)) best = o;
+  }
+  return best;
+}
+
+function nearestRivalTurret(s, h, range) {
+  let best = null, bd = range;
+  for (const st of s.structs) {
+    const d = gap(h, st);
+    if (st.team !== h.team && st.type === 'turret' && d < bd) {
+      bd = d;
+      best = st;
+    }
+  }
+  return best;
+}
+
 const crowd = (s, h, r) =>
   s.enemies.filter((e) => gap(h, e) < r).length + s.heroes.filter((o) => o.alive && o.team !== h.team && gap(h, o) < r).length;
 
@@ -105,13 +127,28 @@ export function botInput(s, i, spend = true) {
   const night = s.phase === 'night';
   const foe = nearestHostile(s, h.team, h.x, h.y, SIGHT);
   const foeD = foe ? gap(h, foe) : Infinity;
+  const hurt = h.hp < h.max * 0.35;
+  // By day, anyone close enough to help comes home when something hostile reaches the Ember.
+  const defend = night || (gap(h, em) < 1200 && nearestHostile(s, h.team, em.x, em.y, 450) !== null);
 
-  // Where to be. By day a healthy bot with time to get home roams: builds, raids or scavenges.
-  let goal = post(h.team, HERO_IDS.indexOf(h.kind)), stopAt = 12, wreck = null;
-  const roam = !night && h.hp >= h.max * 0.35 && s.timer > gap(h, em) / def.speed + 3;
-  if (roam) {
+  // Where to be. A healthy bot with nothing to defend and time to get home roams: builds, raids or scavenges.
+  let goal = post(h.team, HERO_IDS.indexOf(h.kind)), stopAt = 12, wreck = null, fixed = hurt;
+  const raider = (h.kind === 'anvil' || h.kind === 'dart') && s.wave >= 1;
+  // Raiders are far from help, so they turn for home at half health rather than a third.
+  const roam = !defend && h.hp >= h.max * (raider ? 0.5 : 0.35) && s.timer > gap(h, em) / def.speed + 3;
+  const mates = s.heroes.filter((o) => o.team === h.team && o.alive && o !== h);
+  const medic = mates.find((o) => o.kind === 'patch');
+  const patient = h.kind === 'patch' && !hurt ? mates.filter((o) => o.hp < o.max * 0.6 && gap(h, o) < 500).sort((a, c) => a.hp / a.max - c.hp / c.max)[0] : null;
+  if (patient) {
+    goal = patient; // a medic's first job is to get Mend in reach of whoever needs it most
+    stopAt = def.q.r * 0.6;
+    fixed = true;
+  } else if (hurt && defend && medic) {
+    goal = medic; // badly hurt in a fight: fall back to the medic rather than trade shots
+    stopAt = HEROES.patch.q.r * 0.6;
+  } else if (roam) {
     const piece = spend && h.kind === 'cog' ? nextPiece(s, h) : null;
-    const rival = (h.kind === 'anvil' || h.kind === 'dart') && s.wave >= 1 ? raidTarget(s, h) : null;
+    const rival = raider ? raidTarget(s, h) : null;
     if (piece) {
       goal = em; // every blueprint cell is in build range from the Ember itself
       if (piece.ready) out.build = { type: piece.type, cx: piece.cx, cy: piece.cy };
@@ -124,24 +161,30 @@ export function botInput(s, i, spend = true) {
     }
   }
 
-  // What to shoot: a hostile unit in range, else a rival structure or Ember in range.
-  const target = foeD <= gun.range ? foe : rivalThing(s, h, gun.range);
+  // What to shoot: the weakest hostile unit in range (finish kills), else a rival Turret, Ember or Wall in range.
+  const turret = foeD <= gun.range ? null : nearestRivalTurret(s, h, gun.range);
+  const target = weakestHostile(s, h, gun.range) || turret || rivalThing(s, h, gun.range);
   if (target) {
     out.aim = Math.atan2(target.y - h.y, target.x - h.x);
     out.fire = true;
   }
 
-  // How to move: hold a firing band around a foe worth fighting, otherwise head for the goal.
+  // How to move: hold a firing band around a foe worth fighting, or around a Turret we outrange; otherwise head for the goal.
   let to = goal;
-  if (foe && (night || (roam && foeD < gun.range * 1.1))) {
+  if (fixed) to = goal;
+  else if (foe && (defend || (roam && foeD < gun.range * 1.1))) {
     stopAt = 12;
     if (foeD > gun.range * 0.8) to = foe;
     else if (foeD < gun.range * 0.45) to = { x: 2 * h.x - foe.x, y: 2 * h.y - foe.y };
     else to = h;
     if (night && gap(h, em) > LEASH) to = goal;
+  } else if (turret && roam && gun.range > STRUCTS.turret.range + 20) {
+    const d = gap(h, turret);
+    stopAt = 0;
+    to = d < STRUCTS.turret.range + 10 ? { x: 2 * h.x - turret.x, y: 2 * h.y - turret.y } : d > gun.range - 10 ? turret : h;
   }
   const dx = to.x - h.x, dy = to.y - h.y, d = Math.hypot(dx, dy);
-  if (d > stopAt) {
+  if (d > stopAt && d > 0) {
     out.mx = dx / d;
     out.my = dy / d;
   } else if (wreck && to === wreck) out.use = true;
@@ -155,9 +198,9 @@ export function botInput(s, i, spend = true) {
     out.q = foeD < 90;
     out.r = foeD < gun.range;
   } else if (h.kind === 'patch') {
-    const mates = s.heroes.filter((o) => o.team === h.team && !o.out);
-    out.q = mates.some((o) => o.alive && o.hp < o.max * 0.65 && gap(h, o) <= def.q.r);
-    out.r = mates.some((o) => !o.alive) || mates.filter((o) => o.hp < o.max * 0.4).length >= 2;
+    const squad = s.heroes.filter((o) => o.team === h.team && !o.out);
+    out.q = squad.some((o) => o.alive && o.hp < o.max * 0.65 && gap(h, o) <= def.q.r);
+    out.r = squad.some((o) => !o.alive) || squad.filter((o) => o.hp < o.max * 0.4).length >= 2;
   } else {
     out.q = foeD < 400;
     out.r = s.structs.some((st) => st.team === h.team && st.type !== 'spikes' && st.hp < st.max * 0.5);
