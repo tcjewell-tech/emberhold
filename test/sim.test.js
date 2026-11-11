@@ -293,7 +293,7 @@ test('Fortify pulls in AI enemies that would otherwise walk past', () => {
   assert.ok(gap(e, anvil) < ignoring - 60);
 });
 
-test('Overdrive triples Dart\'s fire rate', () => {
+test('Overdrive doubles Dart\'s fire rate', () => {
   const shotsInOneSecond = (overdrive) => {
     const g = arena();
     const h = place(g.heroes[AMBER + DART], MID.x, MID.y);
@@ -307,7 +307,7 @@ test('Overdrive triples Dart\'s fire rate', () => {
   };
   const normal = shotsInOneSecond(false), fast = shotsInOneSecond(true);
   assert.ok(normal >= 7 && normal <= 9, `normal ${normal}`);
-  assert.ok(fast >= 22 && fast <= 25, `overdrive ${fast}`);
+  assert.ok(fast >= 15 && fast <= 17, `overdrive ${fast}`);
 });
 
 test('Second Wind revives downed teammates and fully heals the team', () => {

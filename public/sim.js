@@ -36,16 +36,16 @@ const ULT_PER_HEAL = 0.4;
 export const HERO_IDS = ['anvil', 'dart', 'patch', 'cog'];
 export const HEROES = {
   anvil: {
-    name: 'Anvil', role: 'Vanguard', hp: 240, speed: 150, passive: 'Most health',
-    gun: { name: 'Scattergun', dmg: 9, pellets: 6, spread: 0.3, rate: 1.1, range: 260, speed: 720 },
+    name: 'Anvil', role: 'Vanguard', hp: 300, speed: 165, passive: 'Most health',
+    gun: { name: 'Scattergun', dmg: 10, pellets: 6, spread: 0.3, rate: 1.1, range: 320, speed: 720 },
     q: { name: 'Shockwave', cd: 8, r: 120, dmg: 20, push: 90, stun: 1.5, text: 'Knock back and stun nearby hostiles' },
     r: { name: 'Fortify', time: 6, taken: 0.25, taunt: 320, text: '6 s: take 75% less damage, nearby AI enemies target you' },
   },
   dart: {
     name: 'Dart', role: 'Striker', hp: 120, speed: 215, passive: 'Scavenges 2x faster',
-    gun: { name: 'Pulse rifle', dmg: 9, pellets: 1, spread: 0.03, rate: 8, range: 520, speed: 900 },
+    gun: { name: 'Pulse rifle', dmg: 7, pellets: 1, spread: 0.03, rate: 8, range: 460, speed: 900 },
     q: { name: 'Dash', cd: 4, dist: 150, text: 'Blink a short way in your move direction' },
-    r: { name: 'Overdrive', time: 6, mult: 3, text: '6 s: triple fire rate' },
+    r: { name: 'Overdrive', time: 6, mult: 2, text: '6 s: double fire rate' },
   },
   patch: {
     name: 'Patch', role: 'Medic', hp: 140, speed: 185, passive: 'None',
