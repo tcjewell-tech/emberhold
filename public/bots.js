@@ -149,13 +149,20 @@ export function botInput(s, i, spend = true) {
     stopAt = HEROES.patch.q.r * 0.6;
   } else if (roam) {
     const piece = spend && h.kind === 'cog' ? nextPiece(s, h) : null;
-    const rival = raider ? raidTarget(s, h) : null;
+    // The Dart leads the raid. An Anvil goes only as its bodyguard: alone it is too slow to get back out.
+    const lead = h.kind === 'anvil' ? mates.find((o) => o.kind === 'dart') : null;
+    const rival = raider && (lead || h.kind === 'dart') ? raidTarget(s, h) : null;
     if (piece) {
       goal = em; // every blueprint cell is in build range from the Ember itself
       if (piece.ready) out.build = { type: piece.type, cx: piece.cx, cy: piece.cy };
     } else if (rival) {
       goal = rival;
       stopAt = gun.range * 0.85;
+      if (lead) { // a step ahead of the Dart, between it and what it is raiding
+        const t = 50 / (gap(lead, rival) || 1);
+        goal = { x: lead.x + (rival.x - lead.x) * t, y: lead.y + (rival.y - lead.y) * t };
+        stopAt = 40;
+      }
     } else if ((wreck = pickWreck(s, h, em, h.kind === 'dart' ? Infinity : 900))) {
       goal = wreck;
       stopAt = SCAV_RANGE - 15;

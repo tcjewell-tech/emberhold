@@ -94,9 +94,9 @@ test('Anvil and Dart bots set out to raid a rival Ember once the first night is 
   assert.ok(gap(later.heroes[AMBER + PATCH], later.teams[0].ember) < 900, 'Patch stays near home');
 });
 
-/** Which rival Ember (team index) a team's Anvil bot is walking towards. */
+/** Which rival Ember (team index) a team's Dart bot is walking towards. */
 function raidTarget(g, team) {
-  const anvil = g.heroes[team * 4 + ANVIL], input = botInput(g, anvil.i);
+  const anvil = g.heroes[team * 4 + DART], input = botInput(g, anvil.i);
   const toward = (k) => {
     const em = g.teams[k].ember, d = gap(anvil, em);
     return (input.mx * (em.x - anvil.x) + input.my * (em.y - anvil.y)) / d;
@@ -249,10 +249,10 @@ test('a raider turns for home at half health', () => {
   const g = quiet();
   g.wave = 1;
   const em = g.teams[0].ember, rival = g.teams[1].ember;
-  const anvil = place(g.heroes[AMBER + ANVIL], (em.x + rival.x) / 2, (em.y + rival.y) / 2);
-  assert.ok(heading(botInput(g, anvil.i), anvil, rival) > 0.9, 'healthy: presses on');
-  anvil.hp = anvil.max * 0.45;
-  assert.ok(heading(botInput(g, anvil.i), anvil, em) > 0.9, 'hurt: heads back');
+  const dart = place(g.heroes[AMBER + DART], (em.x + rival.x) / 2, (em.y + rival.y) / 2);
+  assert.ok(heading(botInput(g, dart.i), dart, rival) > 0.9, 'healthy: presses on');
+  dart.hp = dart.max * 0.45;
+  assert.ok(heading(botInput(g, dart.i), dart, em) > 0.9, 'hurt: heads back');
 });
 
 test('a raiding Anvil whose shield is broken pulls back to let it refill', () => {
@@ -260,8 +260,24 @@ test('a raiding Anvil whose shield is broken pulls back to let it refill', () =>
   g.wave = 1;
   const em = g.teams[0].ember, rival = g.teams[1].ember;
   const anvil = place(g.heroes[AMBER + ANVIL], (em.x + rival.x) / 2, (em.y + rival.y) / 2);
+  place(g.heroes[AMBER + DART], anvil.x + (rival.x - em.x) * 0.1, anvil.y + (rival.y - em.y) * 0.1); // its Dart, further along
   anvil.hp = anvil.max * 0.7;
   assert.ok(heading(botInput(g, anvil.i), anvil, rival) > 0.9, 'shield up: presses on');
   anvil.shield = 0;
   assert.ok(heading(botInput(g, anvil.i), anvil, em) > 0.9, 'shield down: backs off');
+});
+
+test('the Anvil bot raids a step ahead of its Dart, never alone', () => {
+  const g = quiet();
+  g.wave = 1;
+  const em = g.teams[0].ember, rival = g.teams[1].ember;
+  const anvil = place(g.heroes[AMBER + ANVIL], (em.x + rival.x) / 2, (em.y + rival.y) / 2);
+  const dart = place(g.heroes[AMBER + DART], anvil.x, anvil.y - 400); // off to one side of the road to Azure
+  assert.ok(heading(botInput(g, anvil.i), anvil, dart) > 0.9, 'goes to its Dart, not the rival Ember');
+  const d = gap(em, rival);
+  place(dart, anvil.x - (rival.x - em.x) * 50 / d, anvil.y - (rival.y - em.y) * 50 / d); // 50 px behind, on the road to Azure
+  const ahead = botInput(g, anvil.i);
+  assert.equal(Math.hypot(ahead.mx, ahead.my), 0, 'holds its place in front');
+  Object.assign(dart, { alive: false, hp: 0 });
+  assert.ok(heading(botInput(g, anvil.i), anvil, em) > 0.9, 'Dart down: heads home');
 });
