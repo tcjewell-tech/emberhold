@@ -1,7 +1,8 @@
 // Emberhold browser client: sends this player's input and draws the snapshots the server
 // sends back. No rules live here; canBuild is imported only to colour the build ghost.
-import { WORLD, CELL, TEAMS, HEROES, HERO_IDS, STRUCTS, ENEMIES, EMBER_R, HERO_R, BUILD_RANGE, SCAV_RANGE, SCAV_TIME, canBuild, buildCost } from './sim.js';
+import { WORLD, CELL, TEAMS, HEROES, HERO_IDS, STRUCTS, ENEMIES, EMBER_R, HERO_R, BUILD_RANGE, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, moveHero } from './sim.js';
 import { interpolate } from './interp.js';
+import { createTimeline, createPredictor } from './net.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls = '', text = '') => Object.assign(document.createElement(tag), { className: cls, textContent: text });
@@ -10,7 +11,6 @@ const canvas = $('game'), ctx = canvas.getContext('2d');
 const shadeCanvas = document.createElement('canvas'), shade = shadeCanvas.getContext('2d');
 const mini = $('minimap').getContext('2d');
 
-const DELAY = 80; // ms behind the server we draw, so there are two snapshots to blend between
 const VIEW = { w: 1600, h: 1000 }; // the most world any screen shows, so a big monitor is no advantage
 const AI_COLOR = { skitter: '#b79cff', spitter: '#e58cff', breaker: '#8a6cff', colossus: '#6f4be0' };
 const AI_SIDES = { skitter: 3, spitter: 4, breaker: 6, colossus: 8 };
@@ -19,10 +19,11 @@ const WHY = {
   rival: 'Too close to a rival Ember', unit: 'Something is standing there', scrap: 'Not enough Scrap',
 };
 
-let ws, slot = -1, lobby = null, latest = null, humans = [];
-const snaps = []; // recent snapshots with their arrival times
+let ws, slot = -1, lobby = null, latest = null, humans = [], seq = 0, timeline = createTimeline();
+const key = crypto.getRandomValues(new Uint32Array(4)).join('-'); // proves a reconnecting player is the one who held the seat
+const snaps = []; // recent snapshots, each with the server time (ms) it shows
 const cam = { x: WORLD.w / 2, y: WORLD.h / 2, scale: 1 };
-const me = { x: 0, y: 0, aim: 0, known: false }; // this player's hero, predicted locally
+const me = createPredictor(); // this player's hero, predicted locally
 const keys = new Set();
 const mouse = { x: innerWidth / 2, y: innerHeight / 2, wx: 0, wy: 0, left: false, right: false };
 const seen = { phase: '', wave: -1, alive: [true, true, true] };
@@ -34,30 +35,51 @@ const send = (m) => ws.readyState === 1 && ws.send(JSON.stringify(m));
 
 function connect() {
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`);
-  ws.onclose = () => ($('offline').hidden = false);
+  timeline = createTimeline(); // a new connection may be a new server, with its clock back at zero
+  snaps.length = 0;
+  let seated = false;
+  ws.onclose = (ev) => {
+    $('offline').textContent = ev.code === 1013 ? 'The server is full. Trying again…' : 'Connection lost. Reconnecting…';
+    $('offline').hidden = false;
+    setTimeout(connect, 1500);
+  };
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
     if (m.t === 'state') {
       latest = m.s;
       humans = m.humans;
-      snaps.push({ at: performance.now(), s: m.s });
-      if (snaps.length > 8) snaps.shift();
+      const at = (m.n * 1000) / 60;
+      timeline.arrive(at, performance.now());
+      snaps.push({ at, s: m.s });
+      if (snaps.length > 30) snaps.shift();
+      if (slot >= 0 && m.s.heroes[slot].alive) me.heard(m.acks[slot], m.s.heroes[slot]);
       onState(m.s);
     } else if (m.t === 'lobby') {
+      $('offline').hidden = true;
       lobby = m;
       humans = m.humans;
       if (!m.running) {
         latest = null;
         snaps.length = 0;
       }
+      if (slot >= 0 && !seated) {
+        seated = true; // reconnected: ask for our hero back, once
+        send({ t: 'join', slot, key });
+      }
       renderSelect();
     } else if (m.t === 'joined') {
+      seated = true;
       slot = m.slot;
       me.known = false;
       $('select').hidden = true;
       $('hud').hidden = false;
       setupHud();
     } else if (m.t === 'denied') {
+      if (slot >= 0) { // our hero was not there to take back: choose again
+        slot = -1;
+        $('select').hidden = false;
+        $('hud').hidden = true;
+      }
       $('note').textContent =
         m.why === 'taken' ? 'Someone just took that hero. Pick another.' : m.why === 'out' ? 'That team has already fallen. Pick another.' : 'Could not join that slot.';
     }
@@ -86,7 +108,7 @@ function renderSelect() {
           return row;
         };
         card.append(head, el('small', '', `${d.role} · ${d.gun.name} · ${d.hp} health`), line(`Q ${d.q.name}:`, d.q.text), line(`R ${d.r.name}:`, d.r.text), line('Passive:', d.passive));
-        card.onclick = () => send({ t: 'join', slot: i });
+        card.onclick = () => send({ t: 'join', slot: i, key });
         col.append(card);
       });
       return col;
@@ -252,7 +274,8 @@ function moveVec() {
 function sendInput(extra) {
   if (slot < 0) return;
   const [mx, my] = moveVec();
-  send({ t: 'input', mx, my, aim: me.aim, fire: mouse.left && !buildType, use: keys.has('KeyF'), ...extra });
+  me.sent(++seq);
+  send({ t: 'input', seq, mx, my, aim: me.aim, fire: mouse.left && !buildType, use: keys.has('KeyF'), ...extra });
 }
 
 function setBuild(type) {
@@ -332,14 +355,13 @@ function follow(dt) {
   const h = slot >= 0 ? latest.heroes[slot] : null;
   const [mx, my] = moveVec();
   if (h && h.alive) {
-    if (!me.known || Math.hypot(me.x - h.x, me.y - h.y) > 120) Object.assign(me, { x: h.x, y: h.y, known: true }); // spawned, dashed or thrown: take the server's word
+    if (!me.known) me.place(h);
     else {
-      // shortcut: predicts plain walking only (no wall collisions); the pull toward the server's position corrects it within a few frames
-      const v = h.stun > 0 ? 0 : HEROES[h.kind].speed * dt, pull = Math.min(1, dt * 8);
-      me.x = clamp(me.x + mx * v, HERO_R, WORLD.w - HERO_R);
-      me.y = clamp(me.y + my * v, HERO_R, WORLD.h - HERO_R);
-      me.x += (h.x - me.x) * pull;
-      me.y += (h.y - me.y) * pull;
+      // Walk by the sim's own rule, so rival Walls stop the prediction just as they stop the server.
+      const v = h.stun > 0 ? 0 : HEROES[h.kind].speed * dt;
+      me.team = h.team;
+      moveHero(latest, me, mx * v, my * v);
+      me.settle(dt);
     }
     cam.x = me.x;
     cam.y = me.y;
@@ -663,8 +685,8 @@ function frame(now) {
   lastFrame = now;
   fit();
   if (!latest) return draw(null, now);
-  // Draw the moment DELAY ms ago: blend the two snapshots either side of it.
-  const at = now - DELAY;
+  // Draw a moment a little behind the newest snapshot: blend the two either side of it.
+  const at = timeline.at(now);
   let k = snaps.length - 1;
   while (k > 0 && snaps[k].at > at) k--;
   const a = snaps[k], b = snaps[k + 1];

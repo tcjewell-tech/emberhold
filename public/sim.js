@@ -119,7 +119,7 @@ export function createGame(seed = 1) {
 
 /** What the server sends each client: the state minus the spawn queue, numbers rounded. */
 export function snapshot(s) {
-  // shortcut: whole state as JSON every time, fine on a LAN; send deltas if this goes over the internet
+  // shortcut: whole state as JSON every time, which leans on the socket's stream compression (see server.js); send deltas if that stops being enough
   return JSON.stringify({ ...s, spawn: undefined, pending: s.spawn.length }, (k, v) => (typeof v === 'number' ? Math.round(v * 100) / 100 : v));
 }
 
@@ -337,7 +337,7 @@ function shoot(s, x, y, angle, speed, range, dmg, team, owner) {
 // ---------------------------------------------------------------- heroes
 
 /** Heroes walk through their own team's structures; a rival's blocking structure stops them. */
-function moveHero(s, h, dx, dy) {
+export function moveHero(s, h, dx, dy) {
   // shortcut: collides on the hero's centre point, so a body can overlap a wall edge by its radius
   const c = cache(s), here = cellOf(h.y) * COLS + cellOf(h.x);
   const open = (x, y) => {

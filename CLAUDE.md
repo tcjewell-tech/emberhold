@@ -11,13 +11,14 @@ Emberhold: a top-down browser game. Three teams (Amber, Azure, Jade) of four her
 ```bash
 npm install
 npm start          # http://localhost:3000, this computer only (PORT env overrides the port)
-npm run lan        # same, bound to 0.0.0.0 for others on the network
+npm run lan        # same, bound to 0.0.0.0: for a LAN, or as the start command on an internet host
+npm start -- --lag=150 --jitter=40   # simulate a slow line (round-trip ms, extra ms each way)
 npm test           # node --test "test/*.test.js"
 node --test test/bots.test.js                                     # one file
 node --test --test-name-pattern="Anvil bot raids" test/bots.test.js   # one test
 ```
 
-There is no build step, linter or bundler. The only dependency is `ws`. The code uses `import.meta.main` and `import.meta.dirname`, so it needs a recent Node (developed on v26). `.claude/launch.json` defines the preview server `emberhold` on port 3000.
+There is no build step, linter or bundler. The only dependency is `ws`. The code uses `import.meta.main` and `import.meta.dirname`, so it needs a recent Node (developed on v26). `.claude/launch.json` defines the preview servers `emberhold` and `emberhold-slow` (simulated lag), both on port 3000.
 
 ## Architecture
 
@@ -25,8 +26,9 @@ One code path: the server is always authoritative, solo play included.
 
 - `public/sim.js` holds every rule. It is pure and headless: `createGame(seed)` returns the state, `step(state, inputs, dt)` advances it. It lives in `public/` because both sides import it: the server runs it, and the browser imports its constants and `canBuild` (for the build ghost) from the same file.
 - `public/bots.js` exports `botInput(state, heroIndex, spend)`. It returns the same input object a human client sends, and keeps no memory between calls. `spend` is false for bots on a team that has a human, so they never spend that team's Scrap.
-- `server.js` exports `startServer()`. It serves `public/` and runs one match at 60 Hz, sending the whole state as JSON at 30 Hz. The match is created when the first human joins and discarded when the last one leaves; a human who leaves hands their hero to a bot.
-- `public/client.js` only sends input and draws. It renders about 80 ms behind, blending snapshots with `public/interp.js`, and predicts its own hero's walking locally.
+- `server.js` exports `startServer()`. It serves `public/` and runs one match at 60 Hz, sending the whole state as JSON at 30 Hz. The match is created when the first human joins and discarded `grace` seconds (default 60) after the last one leaves; a human who leaves hands their hero to a bot.
+- `public/client.js` only sends input and draws. It blends snapshots with `public/interp.js` and predicts its own hero locally.
+- `public/net.js` is the client netcode that must hold up over the internet, kept free of the DOM so Node can test it: `createTimeline` (which moment to draw) and `createPredictor` (own-hero prediction).
 
 ### Things that span files
 
@@ -35,6 +37,9 @@ One code path: the server is always authoritative, solo play included.
 - **State is plain JSON.** The snapshot is `JSON.stringify(state)`, so nothing non-serialisable may go in it. Derived data (cell lookup, wall grid, one flow field per Ember) lives in a `WeakMap` in `sim.js` keyed by the state and rebuilt when `s.sv` changes. Anything that adds or removes a structure must bump `s.sv`; use `addStruct` and the existing removal path rather than touching `s.structs` directly.
 - **Determinism.** The sim uses its own seeded RNG; the same seed and inputs must give the same state (a test checks it). Do not use `Math.random` or the clock in `sim.js` or `bots.js`.
 - **Hostility.** Every hero, shot and structure carries a `team`; AI enemies are hostile to all three. There is no friendly fire within a team, and a team walks and shoots through its own Walls.
+- **Netcode contract.** Each `state` message carries `n` (the server tick, which is the clock the client's timeline runs on, not arrival time) and `acks` (per hero slot, the last input `seq` the server has heard). The client compares the server's position for its hero with where it had predicted itself when input `acks[slot]` went out, so lag is not mistaken for error. It walks its prediction with the sim's own `moveHero`, so Walls stop it exactly as they stop the server.
+- **Bandwidth.** Snapshots stay whole-state JSON; `perMessageDeflate` on the socket does the delta work (about 650 KB/s raw, about 25 KB/s on the wire). Adding fields that change every tick for every entity costs more than their size suggests.
+- **Connections.** A client makes up a `key` and sends it with `join`; showing it again takes its seat back from a connection that died unnoticed. The server pings every `beat` ms and drops silent connections, refuses connections past `maxClients`, and cuts off one that floods.
 - **Static files.** The server only serves a literal file name directly inside `public/` ending in `.html`, `.js` or `.css`. A new asset type or a subfolder needs that check in `server.js` changed.
 
 ## Tests
@@ -58,6 +63,6 @@ Nine matches is a noisy sample; win counts per team swing widely at that size.
 
 ## Known limits
 
-- Built for one machine or a LAN: full-state snapshots every tick, no delta compression.
-- One match per server process.
-- Client prediction covers plain walking only (no wall collisions); the server position corrects it.
+- One match per server process, open to anyone who has the address (no rooms, no password).
+- Only your own hero's movement is predicted. Shots, abilities and builds happen when the server hears them, so they lag by the connection's delay; there is no lag compensation for aiming.
+- No automated test covers the browser's use of `net.js`; `test/net.test.js` covers the module itself.

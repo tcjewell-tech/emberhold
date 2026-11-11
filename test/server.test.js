@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import net from 'node:net';
+import WS from 'ws';
 import { startServer } from '../server.js';
 import { createGame, HEROES } from '../public/sim.js';
 
@@ -158,7 +160,7 @@ test('bots on a team with a human never spend its Scrap; all-bot teams build', a
 });
 
 test('a player who leaves hands their hero to a bot; the last one out ends the match', async (t) => {
-  const { port } = await withServer(t);
+  const { port } = await withServer(t, { grace: 0.05 });
   const a = await connect(port), b = await connect(port);
   a.send({ t: 'join', slot: AMBER_DART });
   b.send({ t: 'join', slot: AZURE_DART });
@@ -200,5 +202,117 @@ test('"Play again" starts a fresh match, but only once the match is over', async
   a.send({ t: 'restart' }); // mid-match: ignored
   await a.next(stateAfter(fresh.s.t + 0.3), 'play to continue');
   assert.equal(made, 2);
+  await a.close();
+});
+
+// ---------------------------------------------------------------- playing over the internet
+
+test('snapshots are compressed on the wire', async (t) => {
+  const { port } = await withServer(t);
+  const ws = new WS(`ws://127.0.0.1:${port}`);
+  t.after(() => ws.terminate());
+  await new Promise((resolve) => ws.on('open', resolve));
+  ws.send(JSON.stringify({ t: 'join', slot: AMBER_DART }));
+  let chars = 0, states = 0;
+  await new Promise((resolve) => ws.on('message', (data) => (chars += data.length, ++states >= 60 && resolve())));
+  const wire = ws._socket.bytesRead;
+  assert.ok(wire < chars / 8, `${states} messages of ${chars} characters took ${wire} bytes`);
+});
+
+test('each snapshot carries the server tick and the last input heard from every player', async (t) => {
+  const { port } = await withServer(t);
+  const a = await connect(port);
+  a.send({ t: 'join', slot: AMBER_DART });
+  const first = await a.next(isState, 'a state');
+  assert.equal(first.acks.length, 12);
+  assert.equal(first.acks[AMBER_DART], 0, 'nothing heard yet');
+  a.send({ t: 'input', mx: 0, my: 0, seq: 41 });
+  a.send({ t: 'input', mx: 0, my: 0, seq: 'x' }); // not a number: ignored
+  const later = await a.next((m) => isState(m) && m.acks[AMBER_DART] === 41, 'the input to be acknowledged');
+  assert.ok(Number.isInteger(later.n) && later.n > first.n, 'the tick count moves on');
+  const next = await a.next(isState, 'the next state');
+  assert.equal(next.n - later.n, 2, 'one snapshot every two ticks');
+  await a.close();
+});
+
+test('a match outlives a short loss of its last player, who gets their hero back', async (t) => {
+  const { port } = await withServer(t, { grace: 5 });
+  const a = await connect(port);
+  a.send({ t: 'join', slot: AMBER_DART });
+  const before = (await a.next(stateAfter(0.3), 'some play')).s;
+  await a.close();
+
+  const back = await connect(port);
+  assert.equal((await back.first(isLobby, 'the lobby')).running, true, 'the match is still there');
+  back.send({ t: 'join', slot: AMBER_DART });
+  const after = (await back.next(isState, 'a state')).s;
+  assert.ok(after.t > before.t, 'the same match, further on');
+  await back.close();
+});
+
+test('a player whose line went dead takes their seat back with their key; nobody else can', async (t) => {
+  const { port } = await withServer(t);
+  const a = await connect(port);
+  a.send({ t: 'join', slot: AMBER_DART, key: 'secret-a' });
+  await a.next((m) => m.t === 'joined', 'joined');
+  const dropped = new Promise((resolve) => a.ws.addEventListener('close', resolve));
+
+  const thief = await connect(port);
+  thief.send({ t: 'join', slot: AMBER_DART, key: 'a-guess' });
+  assert.equal((await thief.next((m) => m.t === 'denied', 'a refusal')).why, 'taken');
+  thief.send({ t: 'join', slot: AMBER_DART });
+  assert.equal((await thief.next((m) => m.t === 'denied', 'a refusal')).why, 'taken', 'no key is not a key');
+
+  const again = await connect(port); // the same player on a new connection, the old one not yet known to be dead
+  again.send({ t: 'join', slot: AMBER_DART, key: 'secret-a' });
+  assert.equal((await again.next((m) => m.t === 'joined', 'joined')).slot, AMBER_DART);
+  await dropped; // the old connection is closed
+  await thief.next(isState, 'play to go on');
+  assert.ok(thief.inbox.filter(isLobby).every((m) => m.humans[AMBER_DART]), 'the seat never fell to a bot');
+  await Promise.all([thief.close(), again.close()]);
+});
+
+test('a connection that has gone silent is dropped', async (t) => {
+  const { port } = await withServer(t, { beat: 100 });
+  // A bare socket that completes the WebSocket handshake and then never answers a ping.
+  const sock = net.connect(port, '127.0.0.1');
+  t.after(() => sock.destroy());
+  sock.on('error', () => {});
+  sock.resume(); // read and discard, or the close would never be noticed
+  const started = performance.now();
+  sock.write('GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n');
+  await new Promise((resolve, reject) => {
+    sock.on('close', resolve);
+    setTimeout(() => reject(new Error('still connected after 2 s')), 2000).unref();
+  });
+  assert.ok(performance.now() - started >= 90, 'not before it had a chance to answer');
+});
+
+test('a full server turns newcomers away; a flooding connection is cut off', async (t) => {
+  const { port } = await withServer(t, { maxClients: 2 });
+  const a = await connect(port), b = await connect(port);
+  const extra = new WebSocket(`ws://127.0.0.1:${port}`);
+  const closed = await new Promise((resolve) => extra.addEventListener('close', resolve));
+  assert.equal(closed.code, 1013);
+
+  a.send({ t: 'join', slot: AMBER_DART });
+  await a.next((m) => m.t === 'joined', 'joined');
+  const cut = new Promise((resolve) => b.ws.addEventListener('close', resolve));
+  for (let k = 0; k < 1500; k++) b.send({ t: 'input', mx: 1, my: 0 });
+  await cut;
+  await a.next(isState, 'the match to carry on');
+  await a.close();
+});
+
+test('the simulated-lag option holds messages back each way and keeps their order', async (t) => {
+  const { port } = await withServer(t, { lag: 200, jitter: 30 });
+  const a = await connect(port);
+  const sent = performance.now();
+  a.send({ t: 'join', slot: AMBER_DART });
+  await a.next((m) => m.t === 'joined', 'joined');
+  assert.ok(performance.now() - sent >= 190, `the reply took ${performance.now() - sent} ms`);
+  await a.next(stateAfter(0.5), 'some play');
+  const ticks = a.inbox.filter(isState).map((m) => m.n);
+  assert.deepEqual(ticks, [...ticks].sort((x, y) => x - y));
   await a.close();
 });

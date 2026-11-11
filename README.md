@@ -14,6 +14,26 @@ npm start
 Open http://localhost:3000 and pick a team and hero. To let others on your network join,
 use `npm run lan` and give them the address it prints.
 
+## Play over the internet
+
+The game is built to play over the internet: each player uses about 25 KB/s, your own hero
+answers your keys at once whatever the lag, and a dropped connection reconnects by itself and
+gives you your hero back (an empty match is kept for 60 seconds).
+
+The server has to run somewhere the other players can reach. Start it with `npm run lan`,
+which listens on every network interface, on the port in the `PORT` environment variable or
+3000. Served over HTTPS, the page switches to a secure WebSocket by itself.
+
+Anyone who has the address can join, and there is one match per server.
+
+To feel what a slow connection is like before you put it online:
+
+```bash
+npm start -- --lag=150 --jitter=40
+```
+
+`--lag` is the round trip in milliseconds; `--jitter` adds up to that many more each way.
+
 ## Controls
 
 | Key | Action |
@@ -33,4 +53,5 @@ npm test
 ```
 
 `public/sim.js` holds every rule and runs headless; `public/bots.js` plays the bot heroes;
-`server.js` runs the one authoritative match; `public/client.js` only sends input and draws.
+`server.js` runs the one authoritative match; `public/client.js` only sends input and draws;
+`public/net.js` keeps the picture smooth and your own hero responsive over a slow connection.
