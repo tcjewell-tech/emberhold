@@ -634,3 +634,11 @@ test('a respawned Anvil comes back with a full shield', () => {
   assert.equal(anvil.alive, true);
   assert.equal(anvil.shield, anvil.shieldMax);
 });
+
+test('a match keeps one colour mood from start to finish, and seeds in a row take each mood in turn', () => {
+  const g = S.createGame(7);
+  const mood = g.mood;
+  for (let n = 0; n < 600; n++) S.step(g, [], DT);
+  assert.equal(g.mood, mood);
+  assert.deepEqual([7, 8, 9].map((seed) => S.createGame(seed).mood).sort(), [0, 1, 2]);
+});

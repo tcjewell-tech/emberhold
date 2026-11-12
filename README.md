@@ -45,6 +45,7 @@ npm start -- --lag=150 --jitter=40
 | F (hold) | Scavenge a wreck for Scrap |
 | 1 2 3 | Build Wall / Turret / Spikes: left-click places (drag to paint), right-click removes, Esc stops |
 | Tab (hold) | Scoreboard |
+| M | Sound on or off |
 
 ## Test
 
@@ -54,4 +55,6 @@ npm test
 
 `public/sim.js` holds every rule and runs headless; `public/bots.js` plays the bot heroes;
 `server.js` runs the one authoritative match; `public/client.js` only sends input and draws;
-`public/net.js` keeps the picture smooth and your own hero responsive over a slow connection.
+`public/net.js` keeps the picture smooth and your own hero responsive over a slow connection;
+`public/art.js` draws the pixel art and `public/sound.js` makes the sound effects, both in code
+with no image or audio files. Each match wears one of three colour moods (Frostfall, Thaw, Dusk).

@@ -99,7 +99,8 @@ export function post(team, k) {
 
 export function createGame(seed = 1) {
   const s = {
-    t: 0, seed: seed | 0, phase: 'day', wave: 0, timer: DAY_LENGTH, winner: null, nextId: 1, sv: 0,
+    // mood: which of the three colour moods the match wears. s.seed cannot say: it moves on with every random number.
+    t: 0, seed: seed | 0, mood: Math.abs(seed | 0) % 3, phase: 'day', wave: 0, timer: DAY_LENGTH, winner: null, nextId: 1, sv: 0,
     teams: TEAMS.map((T) => ({ scrap: START_SCRAP, alive: true, overclock: 0, ember: { x: T.x, y: T.y, hp: EMBER_HP, max: EMBER_HP } })),
     heroes: [], enemies: [], shots: [], structs: [], wrecks: [], fx: [], spawn: [],
   };

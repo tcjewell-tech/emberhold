@@ -3,17 +3,19 @@
 import { WORLD, CELL, TEAMS, HEROES, HERO_IDS, STRUCTS, ENEMIES, EMBER_R, HERO_R, BUILD_RANGE, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, moveHero } from './sim.js';
 import { interpolate } from './interp.js';
 import { createTimeline, createPredictor } from './net.js';
+import { PX, TILE, MOODS, ground, heroSprite, createArt } from './art.js';
+import { createSound } from './sound.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls = '', text = '') => Object.assign(document.createElement(tag), { className: cls, textContent: text });
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const canvas = $('game'), ctx = canvas.getContext('2d');
+const canvas = $('game'), ctx = canvas.getContext('2d'), art = createArt(ctx), sound = createSound();
 const shadeCanvas = document.createElement('canvas'), shade = shadeCanvas.getContext('2d');
 const mini = $('minimap').getContext('2d');
 
-const VIEW = { w: 1600, h: 1000 }; // the most world any screen shows, so a big monitor is no advantage
-const AI_COLOR = { skitter: '#b79cff', spitter: '#e58cff', breaker: '#8a6cff', colossus: '#6f4be0' };
-const AI_SIDES = { skitter: 3, spitter: 4, breaker: 6, colossus: 8 };
+const VIEW = { w: 704, h: 440 }; // the most art pixels any screen shows, so a big monitor is no advantage
+const GUN_SOUND = { anvil: 'Scattergun', dart: 'Pulse rifle', patch: 'Needler', cog: 'Nailgun' };
+const FX_SOUND = { ring: 'Shockwave', dash: 'Dash', heal: 'Mend', down: 'Hero down', scrap: 'Scavenge', ult: 'Ultimate', pop: 'Hit' };
 const WHY = {
   down: 'You are down', range: 'Too far away', occupied: 'Occupied', ember: 'Too close to an Ember',
   rival: 'Too close to a rival Ember', unit: 'Something is standing there', scrap: 'Not enough Scrap',
@@ -27,7 +29,8 @@ const me = createPredictor(); // this player's hero, predicted locally
 const keys = new Set();
 const mouse = { x: innerWidth / 2, y: innerHeight / 2, wx: 0, wy: 0, left: false, right: false };
 const seen = { phase: '', wave: -1, alive: [true, true, true] };
-let buildType = null, ghostWhy = null, lastOrder = '', dark = 0, lastFrame = performance.now(), dpr = 1, bannerUntil = 0;
+let buildType = null, ghostWhy = null, lastOrder = '', dark = 0, lastFrame = performance.now(), zoom = 2, mood = -1, bannerUntil = 0;
+const heard = { id: 0, phase: '', hp: 0, built: 0, hitAt: 0 }, strides = new Map();
 
 // ---------------------------------------------------------------- connection
 
@@ -53,6 +56,7 @@ function connect() {
       snaps.push({ at, s: m.s });
       if (snaps.length > 30) snaps.shift();
       if (slot >= 0 && m.s.heroes[slot].alive) me.heard(m.acks[slot], m.s.heroes[slot]);
+      hear(m.s);
       onState(m.s);
     } else if (m.t === 'lobby') {
       $('offline').hidden = true;
@@ -107,7 +111,7 @@ function renderSelect() {
           row.append(el('b', '', label), ` ${text}`);
           return row;
         };
-        card.append(head, el('small', '', `${d.role} · ${d.gun.name} · ${d.hp} health`), line(`Q ${d.q.name}:`, d.q.text), line(`R ${d.r.name}:`, d.r.text), line('Passive:', d.passive));
+        card.append(heroSprite(kind, team), head, el('small', '', `${d.role} · ${d.gun.name} · ${d.hp} health`), line(`Q ${d.q.name}:`, d.q.text), line(`R ${d.r.name}:`, d.r.text), line('Passive:', d.passive));
         card.onclick = () => send({ t: 'join', slot: i, key });
         col.append(card);
       });
@@ -163,6 +167,40 @@ function scoreTable(s) {
   thead.append(head);
   table.append(thead, body);
   return table;
+}
+
+/** Play what changed since the last snapshot: new shots and effects near the camera, the turn of day, our Ember being hit. */
+function hear(s) {
+  const near = (o) => clamp(1 - Math.hypot(o.x - cam.x, o.y - cam.y) / 900, 0, 1);
+  const team = slot >> 2, mine = slot >= 0 ? s.teams[team] : null;
+  if (heard.id && mine) { // not on the first snapshot, when everything is new
+    const guns = new Map();
+    for (const sh of s.shots) {
+      if (sh.id <= heard.id) continue;
+      const name = sh.owner >= 0 ? GUN_SOUND[s.heroes[sh.owner].kind] : sh.team < 0 ? 'Spit' : 'Turret', k = name + sh.owner;
+      guns.set(k, [name, Math.max(guns.get(k)?.[1] ?? 0, near(sh) * (sh.owner === slot ? 1 : 0.6))]); // one sound per shooter, not per pellet
+    }
+    [...guns.values()].sort((a, b) => b[1] - a[1]).slice(0, 4).forEach(([name, vol]) => sound.play(name, vol));
+    let pops = 0;
+    for (const f of s.fx) {
+      if (f.id <= heard.id) continue;
+      if (f.kind === 'fall') sound.play('Ember lost', 0.7);
+      else if (FX_SOUND[f.kind] && (f.kind !== 'pop' || pops++ < 2)) sound.play(FX_SOUND[f.kind], near(f) * (f.kind === 'pop' ? 0.5 : 1));
+    }
+    if (s.phase !== heard.phase) {
+      if (s.phase === 'night') sound.play('Night falls');
+      else if (s.phase === 'day') sound.play('Dawn');
+      else if (s.phase === 'over') sound.play(s.winner === team ? 'Victory' : 'Ember lost');
+    }
+    const now = performance.now(), built = s.structs.reduce((n, st) => n + (st.team === team && st.ttl === 0), 0);
+    if (mine.ember.hp < heard.hp && now > heard.hitAt + 900) {
+      heard.hitAt = now;
+      sound.play('Ember hit', 0.8);
+    }
+    if (built > heard.built) sound.play('Build', 0.7);
+    heard.built = built;
+  }
+  Object.assign(heard, { id: s.nextId - 1, phase: s.phase, hp: mine ? mine.ember.hp : 0 });
 }
 
 function say(text) {
@@ -247,7 +285,7 @@ function minimap() {
   mini.clearRect(0, 0, 180, 170);
   for (const st of s.structs) dot(st, 2, `${TEAMS[st.team].color}99`);
   for (const w of s.wrecks) dot(w, 2, '#a8744f');
-  for (const e of s.enemies) dot(e, e.type === 'colossus' ? 4 : 2, AI_COLOR.skitter);
+  for (const e of s.enemies) dot(e, e.type === 'colossus' ? 4 : 2, '#b79cff');
   s.teams.forEach((T, i) => {
     if (!T.alive) return;
     mini.fillStyle = TEAMS[i].color;
@@ -306,6 +344,7 @@ addEventListener('keydown', (e) => {
   }
   if (e.repeat) return;
   keys.add(e.code);
+  if (e.code === 'KeyM') say(sound.toggle() ? 'Sound off' : 'Sound on');
   if (e.code === 'Escape') setBuild(null);
   else if (/^Digit[123]$/.test(e.code)) {
     const type = ['wall', 'turret', 'spikes'][e.code.at(-1) - 1];
@@ -372,7 +411,7 @@ function follow(dt) {
       cam.y += my * 900 * dt;
     }
   }
-  cam.scale = Math.max(innerWidth / VIEW.w, innerHeight / VIEW.h);
+  cam.scale = zoom * PX;
   const hw = innerWidth / 2 / cam.scale, hh = innerHeight / 2 / cam.scale;
   cam.x = clamp(cam.x, Math.min(hw, WORLD.w / 2), Math.max(WORLD.w - hw, WORLD.w / 2));
   cam.y = clamp(cam.y, Math.min(hh, WORLD.h / 2), Math.max(WORLD.h - hh, WORLD.h / 2));
@@ -383,300 +422,108 @@ function follow(dt) {
 // ---------------------------------------------------------------- drawing
 
 function fit() {
-  dpr = Math.min(devicePixelRatio || 1, 2);
-  const w = Math.round(innerWidth * dpr), h = Math.round(innerHeight * dpr);
+  // A whole number of screen pixels to each art pixel, so the art stays crisp.
+  zoom = Math.max(1, Math.ceil(Math.max(innerWidth / VIEW.w, innerHeight / VIEW.h)));
+  const w = Math.ceil(innerWidth / zoom), h = Math.ceil(innerHeight / zoom);
   if (canvas.width === w && canvas.height === h) return;
   canvas.width = shadeCanvas.width = w;
   canvas.height = shadeCanvas.height = h;
+  canvas.style.width = `${w * zoom}px`;
+  canvas.style.height = `${h * zoom}px`;
 }
 
-function worldSpace(c) {
-  const k = cam.scale * dpr;
-  c.setTransform(k, 0, 0, k, canvas.width / 2 - cam.x * k, canvas.height / 2 - cam.y * k);
+/** Each match wears the mood its seed picked (s.mood); the HUD panels take its colours too. */
+function wear(k) {
+  if (k === mood) return;
+  mood = k;
+  for (const v of ['panel', 'panel2', 'edge']) document.documentElement.style.setProperty(`--${v}`, MOODS[k][v]);
 }
 
-const circle = (c, x, y, r) => {
-  c.beginPath();
-  c.arc(x, y, r, 0, Math.PI * 2);
-};
-
-function polygon(x, y, r, sides, turn) {
-  ctx.beginPath();
-  for (let i = 0; i < sides; i++) {
-    const a = turn + (i / sides) * Math.PI * 2;
-    ctx[i ? 'lineTo' : 'moveTo'](x + Math.cos(a) * r, y + Math.sin(a) * r);
-  }
-  ctx.closePath();
-}
-
-function healthBar(x, y, w, frac, color) {
-  ctx.fillStyle = '#05080e';
-  ctx.fillRect(x - 1, y - 1, w + 2, 6);
-  ctx.fillStyle = color;
-  ctx.fillRect(x, y, w * clamp(frac, 0, 1), 4);
-}
-
-function drawWreck(w, s) {
-  ctx.save();
-  ctx.translate(w.x, w.y);
-  ctx.rotate(w.id * 2.4);
-  ctx.fillStyle = '#6b4a35';
-  ctx.strokeStyle = '#a8744f';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  for (const [x, y] of [[-16, -8], [4, -14], [17, -3], [9, 12], [-12, 10]]) ctx.lineTo(x, y);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-  ctx.fillStyle = '#f2c66d';
-  ctx.fillRect(-4, -4, 7, 5);
-  ctx.restore();
-  const picker = s.heroes.find((h) => h.alive && h.scavId === w.id && h.scav > 0);
-  if (!picker) return;
-  ctx.strokeStyle = TEAMS[picker.team].color;
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.arc(w.x, w.y, 26, -Math.PI / 2, -Math.PI / 2 + (picker.scav / SCAV_TIME) * Math.PI * 2);
-  ctx.stroke();
-}
-
-function drawStruct(st) {
-  const color = TEAMS[st.team].color, x = st.cx * CELL, y = st.cy * CELL;
-  if (st.type === 'spikes') {
-    ctx.fillStyle = color;
-    ctx.globalAlpha = 0.3 + 0.6 * (st.hp / st.max);
-    for (let i = 0; i < 9; i++) {
-      const px = x + 8 + (i % 3) * 12, py = y + 12 + Math.floor(i / 3) * 12;
-      ctx.beginPath();
-      ctx.moveTo(px - 4, py + 4);
-      ctx.lineTo(px, py - 6);
-      ctx.lineTo(px + 4, py + 4);
-      ctx.fill();
-    }
-    ctx.globalAlpha = 1;
-    return;
-  }
-  ctx.fillStyle = '#18233a';
-  ctx.fillRect(x + 1, y + 1, CELL - 2, CELL - 2);
-  ctx.fillStyle = `${color}40`;
-  ctx.fillRect(x + 1, y + 1, CELL - 2, CELL - 2);
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 2;
-  ctx.setLineDash(st.ttl > 0 ? [5, 4] : []); // a Sentry is temporary
-  ctx.strokeRect(x + 3, y + 3, CELL - 6, CELL - 6);
-  ctx.setLineDash([]);
-  if (st.type === 'turret') {
-    ctx.strokeStyle = '#dfe7f5';
-    ctx.lineWidth = 5;
-    ctx.beginPath();
-    ctx.moveTo(st.x, st.y);
-    ctx.lineTo(st.x + Math.cos(st.aim) * 19, st.y + Math.sin(st.aim) * 19);
-    ctx.stroke();
-    ctx.fillStyle = color;
-    circle(ctx, st.x, st.y, 10);
-    ctx.fill();
-  }
-  if (st.hp < st.max) healthBar(x + 6, y + CELL - 9, CELL - 12, st.hp / st.max, color);
-}
-
-function drawEmber(T, k, now) {
-  const { x, y, hp, max } = T.ember, color = TEAMS[k].color;
-  if (!T.alive) {
-    ctx.fillStyle = '#161d2a';
-    ctx.strokeStyle = '#2c3648';
-    ctx.lineWidth = 3;
-    circle(ctx, x, y, EMBER_R);
-    ctx.fill();
-    ctx.stroke();
-    return;
-  }
-  const glow = 170 * (1 + 0.06 * Math.sin(now / 300 + k));
-  const g = ctx.createRadialGradient(x, y, 8, x, y, glow);
-  g.addColorStop(0, `${color}cc`);
-  g.addColorStop(0.3, `${color}44`);
-  g.addColorStop(1, `${color}00`);
-  ctx.fillStyle = g;
-  circle(ctx, x, y, glow);
-  ctx.fill();
-  ctx.fillStyle = color;
-  circle(ctx, x, y, EMBER_R);
-  ctx.fill();
-  ctx.fillStyle = '#fff3d6';
-  circle(ctx, x, y, EMBER_R * 0.45);
-  ctx.fill();
-  ctx.lineWidth = 6;
-  ctx.strokeStyle = '#05080e';
-  circle(ctx, x, y, EMBER_R + 10);
-  ctx.stroke();
-  ctx.strokeStyle = color;
-  ctx.beginPath();
-  ctx.arc(x, y, EMBER_R + 10, -Math.PI / 2, -Math.PI / 2 + (hp / max) * Math.PI * 2);
-  ctx.stroke();
-}
-
-function drawEnemy(e) {
-  const d = ENEMIES[e.type];
-  ctx.fillStyle = e.stun > 0 ? '#7fa8ff' : AI_COLOR[e.type];
-  ctx.strokeStyle = '#1a1030';
-  ctx.lineWidth = 2;
-  polygon(e.x, e.y, d.r + 2, AI_SIDES[e.type], e.id);
-  ctx.fill();
-  ctx.stroke();
-  if (e.type === 'colossus') {
-    ctx.fillStyle = '#ffd0f0';
-    circle(ctx, e.x, e.y, 9);
-    ctx.fill();
-  }
-  if (e.hp < e.max) healthBar(e.x - d.r, e.y - d.r - 10, d.r * 2, e.hp / e.max, '#e58cff');
-}
-
-function drawHero(h) {
-  const mine = h.i === slot && me.known, color = TEAMS[h.team].color;
-  const x = mine ? me.x : h.x, y = mine ? me.y : h.y, aim = mine ? me.aim : h.aim;
-  ctx.strokeStyle = '#dfe7f5';
-  ctx.lineWidth = 5;
-  ctx.beginPath();
-  ctx.moveTo(x + Math.cos(aim) * 8, y + Math.sin(aim) * 8);
-  ctx.lineTo(x + Math.cos(aim) * 25, y + Math.sin(aim) * 25);
-  ctx.stroke();
-  ctx.fillStyle = color;
-  circle(ctx, x, y, HERO_R);
-  ctx.fill();
-  ctx.lineWidth = mine ? 3 : 2;
-  ctx.strokeStyle = mine ? '#ffffff' : '#05080e';
-  ctx.stroke();
-  ctx.fillStyle = '#05080e';
-  ctx.font = 'bold 13px system-ui, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(HEROES[h.kind].name[0], x, y + 1);
-  const ring = (r, c) => {
-    ctx.strokeStyle = c;
-    ctx.lineWidth = 3;
-    circle(ctx, x, y, r);
-    ctx.stroke();
-  };
-  if (h.fortify > 0) ring(HERO_R + 7, '#ffe9a8');
-  if (h.overdrive > 0) ring(HERO_R + 7, '#ff7ad9');
-  if (h.stun > 0) ring(HERO_R + 4, '#7fa8ff');
-  healthBar(x - 18, y - 28, 36, h.hp / h.max, color);
-  if (h.shieldMax) healthBar(x - 18, y - 33, 36, h.shield / h.shieldMax, '#9fd0ff');
-  ctx.fillStyle = '#cfd8e8';
-  ctx.font = '11px system-ui, sans-serif';
-  ctx.fillText(HEROES[h.kind].name, x, y - (h.shieldMax ? 43 : 38));
-}
-
-function drawShot(sh) {
-  ctx.strokeStyle = sh.team < 0 ? '#ff9ad5' : TEAMS[sh.team].color;
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(sh.x, sh.y);
-  ctx.lineTo(sh.x - sh.vx * 0.025, sh.y - sh.vy * 0.025);
-  ctx.stroke();
-}
-
-function drawFx(f) {
-  const p = clamp(1 - f.ttl / 0.45, 0, 1); // 0 at birth, 1 as it fades out
-  const color = f.kind === 'heal' ? '#7dffa8' : f.kind === 'down' ? '#ff6b6b' : f.kind === 'scrap' ? '#f2c66d' : f.kind === 'ult' ? '#ffffff' : f.team < 0 ? '#e58cff' : TEAMS[f.team].color;
-  ctx.globalAlpha = 1 - p;
-  ctx.strokeStyle = color;
-  ctx.lineWidth = f.kind === 'fall' ? 10 : 4;
-  circle(ctx, f.x, f.y, f.r * (f.kind === 'dash' ? 1 : 0.3 + 0.7 * p) * (f.kind === 'fall' ? 1.6 : 1));
-  ctx.stroke();
-  if (f.kind === 'heal' || f.kind === 'pop') {
-    ctx.fillStyle = color;
-    ctx.globalAlpha = (1 - p) * 0.25;
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-}
-
-/** Night: darken the screen, with pools of light round Embers, heroes and Turrets. */
-function nightfall(s) {
+/** Night: darken the screen, with pools of light round Embers, heroes, Turrets and shots. */
+function nightfall(s, X, Y) {
   dark += ((s.phase === 'night' ? 1 : 0) - dark) * 0.04;
   if (dark < 0.02) return;
-  shade.setTransform(1, 0, 0, 1, 0, 0);
   shade.globalCompositeOperation = 'source-over';
   shade.clearRect(0, 0, shadeCanvas.width, shadeCanvas.height);
-  shade.fillStyle = `rgba(3, 6, 16, ${0.72 * dark})`;
+  shade.fillStyle = `rgba(${MOODS[mood].night},${0.76 * dark})`;
   shade.fillRect(0, 0, shadeCanvas.width, shadeCanvas.height);
   shade.globalCompositeOperation = 'destination-out';
-  worldSpace(shade);
   const light = (x, y, r) => {
+    if (x < -r || y < -r || x > shadeCanvas.width + r || y > shadeCanvas.height + r) return;
     const g = shade.createRadialGradient(x, y, r * 0.25, x, y, r);
     g.addColorStop(0, 'rgba(0,0,0,1)');
     g.addColorStop(1, 'rgba(0,0,0,0)');
     shade.fillStyle = g;
-    circle(shade, x, y, r);
-    shade.fill();
+    shade.fillRect(x - r, y - r, r * 2, r * 2);
   };
-  for (const T of s.teams) if (T.alive) light(T.ember.x, T.ember.y, 460);
-  for (const h of s.heroes) if (h.alive) h.i === slot && me.known ? light(me.x, me.y, 300) : light(h.x, h.y, 190);
-  for (const st of s.structs) if (st.type === 'turret') light(st.x, st.y, 130);
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  for (const T of s.teams) if (T.alive) light(X(T.ember.x), Y(T.ember.y) - 6, 230);
+  for (const h of s.heroes) if (h.alive) h.i === slot && me.known ? light(X(me.x), Y(me.y) - 6, 150) : light(X(h.x), Y(h.y) - 6, 95);
+  for (const st of s.structs) if (st.type === 'turret') light(X(st.x), Y(st.y), 65);
+  for (const sh of s.shots) light(X(sh.x), Y(sh.y), 16);
   ctx.drawImage(shadeCanvas, 0, 0);
-  worldSpace(ctx);
 }
 
 /** Build mode: the cell under the cursor, green if it can be built on, and the build range. */
-function drawGhost() {
+function drawGhost(X, Y) {
   const h = latest.heroes[slot];
   if (!h.alive) return;
-  const cx = Math.floor(mouse.wx / CELL), cy = Math.floor(mouse.wy / CELL);
+  const cx = Math.floor(mouse.wx / CELL), cy = Math.floor(mouse.wy / CELL), x = X(cx * CELL), y = Y(cy * CELL);
   ghostWhy = canBuild(latest, slot, buildType, cx, cy);
-  ctx.fillStyle = ghostWhy ? 'rgba(255,107,107,0.25)' : 'rgba(125,255,168,0.25)';
-  ctx.strokeStyle = ghostWhy ? '#ff6b6b' : '#7dffa8';
-  ctx.lineWidth = 2;
-  ctx.fillRect(cx * CELL, cy * CELL, CELL, CELL);
-  ctx.strokeRect(cx * CELL, cy * CELL, CELL, CELL);
-  ctx.strokeStyle = 'rgba(255,255,255,0.16)';
-  ctx.setLineDash([6, 8]);
-  circle(ctx, me.x, me.y, BUILD_RANGE);
-  ctx.stroke();
-  ctx.setLineDash([]);
-  if (STRUCTS[buildType].range) {
-    ctx.strokeStyle = 'rgba(125,255,168,0.3)';
-    circle(ctx, (cx + 0.5) * CELL, (cy + 0.5) * CELL, STRUCTS[buildType].range);
-    ctx.stroke();
-  }
+  const col = ghostWhy ? '#ff6b6b' : '#7dffa8';
+  ctx.globalAlpha = 0.3;
+  art.S.R(x, y, TILE, TILE, col);
+  ctx.globalAlpha = 1;
+  art.S.R(x, y, TILE, 1, col); art.S.R(x, y + TILE - 1, TILE, 1, col); art.S.R(x, y, 1, TILE, col); art.S.R(x + TILE - 1, y, 1, TILE, col);
+  art.ring(X(me.x), Y(me.y), BUILD_RANGE * PX, 'rgba(255,255,255,0.4)', { gap: 5 });
+  if (STRUCTS[buildType].range) art.ring(x + TILE / 2, y + TILE / 2, STRUCTS[buildType].range * PX, 'rgba(125,255,168,0.6)', { gap: 3 });
 }
 
 function draw(s, now) {
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = '#070b12';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const W = canvas.width, H = canvas.height;
+  ctx.imageSmoothingEnabled = false;
+  ctx.fillStyle = '#10131f';
+  ctx.fillRect(0, 0, W, H);
   if (!s) return;
-  worldSpace(ctx);
-  const hw = innerWidth / 2 / cam.scale, hh = innerHeight / 2 / cam.scale;
-  const inView = (o, pad = 60) => Math.abs(o.x - cam.x) < hw + pad && Math.abs(o.y - cam.y) < hh + pad;
+  wear(s.mood);
+  // The camera moves a whole art pixel at a time, so nothing shimmers as it scrolls.
+  const ox = Math.round(cam.x * PX - W / 2), oy = Math.round(cam.y * PX - H / 2);
+  const X = (v) => Math.round(v * PX) - ox, Y = (v) => Math.round(v * PX) - oy;
+  const inView = (o, pad = 40) => { const x = X(o.x), y = Y(o.y); return x > -pad && y > -pad && x < W + pad && y < H + pad; };
+  ctx.drawImage(ground(mood), -ox, -oy);
 
-  ctx.fillStyle = '#0e1624';
-  ctx.fillRect(0, 0, WORLD.w, WORLD.h);
-  ctx.strokeStyle = 'rgba(130,160,210,0.06)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let x = Math.max(0, Math.floor((cam.x - hw) / CELL) * CELL); x <= Math.min(WORLD.w, cam.x + hw); x += CELL) {
-    ctx.moveTo(x, Math.max(0, cam.y - hh));
-    ctx.lineTo(x, Math.min(WORLD.h, cam.y + hh));
+  // Everything that stands on the ground, drawn back to front so nearer things overlap farther ones.
+  const standing = [];
+  const stand = (y, paint) => standing.push([y, paint]);
+  for (const st of s.structs) {
+    if (!inView(st)) continue;
+    const x = X(st.cx * CELL), y = Y(st.cy * CELL);
+    if (st.type === 'spikes') art.spikes(st, x, y); // flat on the ground: under everything
+    else stand(st.y + CELL / 2, () => art[st.type](st, x, y));
   }
-  for (let y = Math.max(0, Math.floor((cam.y - hh) / CELL) * CELL); y <= Math.min(WORLD.h, cam.y + hh); y += CELL) {
-    ctx.moveTo(Math.max(0, cam.x - hw), y);
-    ctx.lineTo(Math.min(WORLD.w, cam.x + hw), y);
+  for (const w of s.wrecks) {
+    if (!inView(w)) continue;
+    stand(w.y, () => art.wreck(X(w.x), Y(w.y)));
+    const picker = s.heroes.find((h) => h.alive && h.scavId === w.id && h.scav > 0);
+    if (picker) stand(w.y + 1, () => art.ring(X(w.x), Y(w.y), 17, TEAMS[picker.team].color, { turn: picker.scav / SCAV_TIME, a0: -Math.PI / 2, thick: 2 }));
   }
-  ctx.stroke();
-  ctx.strokeStyle = '#2a3a58';
-  ctx.lineWidth = 4;
-  ctx.strokeRect(0, 0, WORLD.w, WORLD.h);
+  s.teams.forEach((T, k) => inView(T.ember, 120) && stand(T.ember.y + 12, () => art.ember(k, X(T.ember.x), Y(T.ember.y), T.ember.hp / T.ember.max, T.alive, now)));
+  for (const e of s.enemies) if (inView(e)) stand(e.y, () => art.enemy(e, X(e.x), Y(e.y) + ENEMIES[e.type].r * PX * 0.6, now));
+  for (const h of s.heroes) {
+    if (!h.alive) continue;
+    const mine = h.i === slot && me.known, p = mine ? me : h;
+    // A hero is mid-stride for a moment after it last moved.
+    const was = strides.get(h.i);
+    if (!was || Math.hypot(p.x - was.x, p.y - was.y) > 0.4) strides.set(h.i, { x: p.x, y: p.y, until: was ? now + 140 : 0 });
+    if (inView(p)) stand(p.y, () => art.hero(h, X(p.x), Y(p.y) + 7, mine ? me.aim : h.aim, { walking: now < strides.get(h.i).until, mine, t: now }));
+  }
+  standing.sort((a, b) => a[0] - b[0]).forEach(([, paint]) => paint());
 
-  for (const w of s.wrecks) if (inView(w)) drawWreck(w, s);
-  for (const st of s.structs) if (inView(st)) drawStruct(st);
-  s.teams.forEach((T, k) => inView(T.ember, 220) && drawEmber(T, k, now));
-  for (const e of s.enemies) if (inView(e)) drawEnemy(e);
-  for (const h of s.heroes) if (h.alive && inView(h)) drawHero(h);
-  for (const sh of s.shots) if (inView(sh)) drawShot(sh);
-  for (const f of s.fx) if (inView(f, 400)) drawFx(f);
-  nightfall(s);
-  if (buildType && slot >= 0) drawGhost();
+  s.teams.forEach((T, k) => T.alive && inView(T.ember, 160) && art.glow(X(T.ember.x), Y(T.ember.y) - 8, 90 + 60 * dark, TEAMS[k].color, 0.2));
+  nightfall(s, X, Y);
+  if (dark > 0.3) for (const e of s.enemies) if (inView(e)) art.eyes(e, X(e.x), Y(e.y) + ENEMIES[e.type].r * PX * 0.6); // a wave is seen coming
+  for (const sh of s.shots) if (inView(sh)) art.shot(sh, X(sh.x), Y(sh.y));
+  for (const f of s.fx) if (inView(f, 200)) art.fx(f, X(f.x), Y(f.y), f.r * PX);
+  if (buildType && slot >= 0) drawGhost(X, Y);
 }
 
 function frame(now) {
