@@ -14,6 +14,14 @@ npm start
 Open http://localhost:3000 and pick a team and hero. To let others on your network join,
 use `npm run lan` and give them the address it prints.
 
+### On a phone or tablet
+
+Turn it sideways. Your left thumb moves and your right thumb aims and fires; a stick appears
+wherever each thumb lands. Tap Q and R for your ability and ultimate, hold Scavenge at a wreck,
+and tap Wall, Turret or Spikes and then the ground to build (Remove switches to removing).
+Touch aim snaps to a hostile near where you point, to make up for a thumb being less exact
+than a mouse. The scoreboard and the sound switch are keyboard-only for now.
+
 ## Play over the internet
 
 The game is built to play over the internet: each player uses about 25 KB/s, your own hero

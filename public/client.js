@@ -5,6 +5,7 @@ import { interpolate } from './interp.js';
 import { createTimeline, createPredictor } from './net.js';
 import { PX, TILE, MOODS, ground, heroSprite, createArt } from './art.js';
 import { createSound } from './sound.js';
+import { createTouch, aimAssist } from './touch.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls = '', text = '') => Object.assign(document.createElement(tag), { className: cls, textContent: text });
@@ -302,6 +303,7 @@ function minimap() {
 // ---------------------------------------------------------------- input
 
 function moveVec() {
+  if (touch.move.mag) return [touch.move.x, touch.move.y];
   const mx = (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) - (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0);
   const my = (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0) - (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0);
   const len = Math.hypot(mx, my) || 1;
@@ -313,7 +315,7 @@ function sendInput(extra) {
   if (slot < 0) return;
   const [mx, my] = moveVec();
   me.sent(++seq);
-  send({ t: 'input', seq, mx, my, aim: me.aim, fire: mouse.left && !buildType, use: keys.has('KeyF'), ...extra });
+  send({ t: 'input', seq, mx, my, aim: me.aim, fire: (mouse.left || touch.fire) && !buildType, use: keys.has('KeyF'), ...extra });
 }
 
 function setBuild(type) {
@@ -382,6 +384,28 @@ canvas.addEventListener('mousedown', (e) => {
   sendInput();
 });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// Touch: sticks for moving and aiming; in build mode a touch on the right half points at a cell.
+let removing = false;
+const touch = createTouch(canvas, {
+  building: () => buildType !== null,
+  point(x, y, down) {
+    Object.assign(mouse, { x, y, left: down && !removing, right: down && removing });
+    if (down) order();
+    else lastOrder = '';
+  },
+});
+if (matchMedia('(pointer: coarse)').matches) document.body.classList.add('touch');
+$('q').onclick = () => sendInput({ q: true });
+$('r').onclick = () => sendInput({ r: true });
+$('rm').onclick = () => $('rm').classList.toggle('on', (removing = !removing));
+for (const [type, on] of [['touchstart', true], ['touchend', false], ['touchcancel', false]]) {
+  $('use').addEventListener(type, (e) => {
+    e.preventDefault();
+    keys[on ? 'add' : 'delete']('KeyF');
+    sendInput();
+  }, { passive: false });
+}
 for (const b of $('build').querySelectorAll('button')) b.onclick = () => setBuild(buildType === b.dataset.type ? null : b.dataset.type);
 $('again').onclick = () => send({ t: 'restart' });
 setInterval(sendInput, 33);
@@ -416,14 +440,21 @@ function follow(dt) {
   cam.x = clamp(cam.x, Math.min(hw, WORLD.w / 2), Math.max(WORLD.w - hw, WORLD.w / 2));
   cam.y = clamp(cam.y, Math.min(hh, WORLD.h / 2), Math.max(WORLD.h - hh, WORLD.h / 2));
   Object.assign(mouse, { wx: toWorld(mouse.x, mouse.y).x, wy: toWorld(mouse.x, mouse.y).y });
-  me.aim = Math.atan2(mouse.wy - me.y, mouse.wx - me.x);
+  if (!touch.used) me.aim = Math.atan2(mouse.wy - me.y, mouse.wx - me.x);
+  else if (touch.aim !== null && h) {
+    // A thumb is less exact than a mouse: snap to a hostile near the line of fire.
+    const hostiles = [...latest.enemies, ...latest.heroes.filter((o) => o.alive && o.team !== h.team)];
+    me.aim = aimAssist(touch.aim, me, hostiles, HEROES[h.kind].gun.range);
+  } else if (mx || my) me.aim = Math.atan2(my, mx); // not aiming: face the way we walk
 }
 
 // ---------------------------------------------------------------- drawing
 
 function fit() {
   // A whole number of screen pixels to each art pixel, so the art stays crisp.
-  zoom = Math.max(1, Math.ceil(Math.max(innerWidth / VIEW.w, innerHeight / VIEW.h)));
+  // On a phone that means whole device pixels: its CSS pixels are several device pixels wide.
+  const dpr = devicePixelRatio || 1;
+  zoom = Math.max(1, Math.ceil(Math.max((innerWidth * dpr) / VIEW.w, (innerHeight * dpr) / VIEW.h))) / dpr;
   const w = Math.ceil(innerWidth / zoom), h = Math.ceil(innerHeight / zoom);
   if (canvas.width === w && canvas.height === h) return;
   canvas.width = shadeCanvas.width = w;
