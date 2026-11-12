@@ -263,7 +263,7 @@ function hud() {
   $('r').lastChild.textContent = h.ult >= 100 ? 'Ready' : `${Math.floor(h.ult)}% charged`;
 
   $('scrap').lastChild.textContent = T.scrap;
-  for (const b of $('build').querySelectorAll('button')) {
+  for (const b of $('build').querySelectorAll('button[data-type]')) {
     const cost = buildCost(h.kind, b.dataset.type);
     b.lastChild.textContent = `${cost} Scrap`;
     b.classList.toggle('poor', T.scrap < cost);
@@ -409,7 +409,7 @@ if (matchMedia('(pointer: coarse)').matches) document.body.classList.add('touch'
 $('q').onclick = () => sendInput({ q: true });
 $('r').onclick = () => sendInput({ r: true });
 $('rm').onclick = () => $('rm').classList.toggle('on', (removing = !removing));
-for (const b of $('build').querySelectorAll('button')) b.onclick = () => setBuild(buildType === b.dataset.type ? null : b.dataset.type);
+for (const b of $('build').querySelectorAll('button[data-type]')) b.onclick = () => setBuild(buildType === b.dataset.type ? null : b.dataset.type);
 $('again').onclick = () => send({ t: 'restart' });
 setInterval(sendInput, 33);
 

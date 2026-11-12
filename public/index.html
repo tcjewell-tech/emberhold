@@ -116,7 +116,8 @@
   /* the thumbs own the bottom corners: move the build bar up top, and the phase panel aside to make room */
   body.touch #build { top: 10px; right: 10px; bottom: auto; }
   body.touch #top { left: 10px; transform: none; }
-  body.touch #squad, body.touch #minimap { display: none; }
+  body.touch #squad { display: none; }
+  body.touch #minimap { display: block; bottom: 12px; pointer-events: none; opacity: 0.9; } /* touches pass through to the move stick */
   body.touch #hint { bottom: 96px; }
   /* a phone on its side is short: shrink the HUD and the screens to fit */
   @media (max-height: 520px) { #hud, .overlay .sheet { zoom: 0.6; } .overlay { place-items: start center; } }
@@ -188,6 +189,12 @@
 </section>
 
 <div id="offline" hidden>Connection lost. Reconnecting…</div>
-<script type="module" src="client.js"></script>
+<script>
+  // Say so on screen when the game breaks: on a phone there is no console to look at.
+  const broke = (what) => { const bar = document.getElementById('offline'); bar.textContent = `Something went wrong: ${what}`; bar.hidden = false; };
+  addEventListener('error', (e) => broke(e.message || 'a file failed to load'));
+  addEventListener('unhandledrejection', (e) => broke(e.reason?.message || String(e.reason)));
+</script>
+<script type="module" src="client.js" onerror="broke('the game files failed to load. Reload the page.')"></script>
 </body>
 </html>
