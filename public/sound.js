@@ -59,6 +59,7 @@ export function createSound() {
       scale = vol;
       SFX[name]();
     },
+    muted: () => muted,
     /** Flip sound on or off; returns true when now muted. */
     toggle() {
       muted = !muted;

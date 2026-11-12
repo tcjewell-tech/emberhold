@@ -6,7 +6,7 @@ import { createTimeline, createPredictor } from './net.js';
 import { PX, TILE, MOODS, ground, heroSprite, createArt } from './art.js';
 import { createSound } from './sound.js';
 import { createTouch } from './touch.js';
-import { botInput } from './bots.js';
+import { botInput, nextPiece } from './bots.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls = '', text = '') => Object.assign(document.createElement(tag), { className: cls, textContent: text });
@@ -272,7 +272,7 @@ function hud() {
 
   const nearWreck = h.alive && s.wrecks.some((w) => Math.hypot(w.x - h.x, w.y - h.y) < SCAV_RANGE);
   $('hint').textContent = buildType
-    ? `${ghostWhy ? `${WHY[ghostWhy]}. ` : ''}${touch.used ? 'Tap the ground to build. Tap the same button again to stop' : 'Left-click places, right-click removes, Esc stops building'}`
+    ? `${ghostWhy ? `${WHY[ghostWhy]}. ` : ''}${touch.used ? 'Drag onto the ground and let go to build' : 'Left-click places, right-click removes, Esc stops building'}`
     : nearWreck && !touch.used ? 'Hold F to scavenge' : '';
   if (performance.now() > bannerUntil) $('banner').style.opacity = 0;
   if (!$('scores').hidden) $('scores').firstElementChild.replaceChildren(scoreTable(s));
@@ -356,7 +356,7 @@ addEventListener('keydown', (e) => {
   }
   if (e.repeat) return;
   keys.add(e.code);
-  if (e.code === 'KeyM') say(sound.toggle() ? 'Sound off' : 'Sound on');
+  if (e.code === 'KeyM') say(sound.toggle() ? 'Sound off' : 'Sound on'), showSettings();
   if (e.code === 'Escape') setBuild(null);
   else if (/^Digit[123]$/.test(e.code)) {
     const type = ['wall', 'turret', 'spikes'][e.code.at(-1) - 1];
@@ -395,10 +395,15 @@ canvas.addEventListener('mousedown', (e) => {
 });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-// Touch: a stick for moving; in build mode a tap points at a cell. Aim, fire and scavenge are automatic (see sendInput).
-let removing = false;
+// Touch: a stick for moving; aim, fire and scavenge are automatic (see sendInput).
+// Building on touch takes one of two styles, picked under Settings:
+//   drag: drag from Wall, Turret or Spikes onto the ground; a ghost follows the thumb and it is placed on release.
+//   auto: one Auto-build button places the next piece of the base layout the bot Cog builds.
+let removing = false, dragging = null;
+const prefs = { build: 'drag' };
+try { Object.assign(prefs, JSON.parse(localStorage.getItem('emberhold-prefs') || '{}')); } catch { /* defaults */ }
 const touch = createTouch(canvas, {
-  building: () => buildType !== null,
+  building: () => buildType !== null && !dragging,
   point(x, y, down) {
     Object.assign(mouse, { x, y, left: down && !removing, right: down && removing });
     if (down) order();
@@ -409,7 +414,61 @@ if (matchMedia('(pointer: coarse)').matches) document.body.classList.add('touch'
 $('q').onclick = () => sendInput({ q: true });
 $('r').onclick = () => sendInput({ r: true });
 $('rm').onclick = () => $('rm').classList.toggle('on', (removing = !removing));
-for (const b of $('build').querySelectorAll('button[data-type]')) b.onclick = () => setBuild(buildType === b.dataset.type ? null : b.dataset.type);
+for (const b of $('build').querySelectorAll('button[data-type]')) {
+  b.onclick = () => setBuild(buildType === b.dataset.type ? null : b.dataset.type);
+  b.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    dragging = { id: e.changedTouches[0].identifier };
+    setBuild(b.dataset.type);
+    mouse.x = -1e4; // no ghost until the thumb is over the ground
+  }, { passive: false });
+}
+addEventListener('touchmove', (e) => {
+  const t = dragging && [...e.changedTouches].find((t) => t.identifier === dragging.id);
+  if (!t) return;
+  e.preventDefault();
+  Object.assign(mouse, { x: t.clientX, y: t.clientY - 40 }); // the ghost sits just above the thumb, where it can be seen
+}, { passive: false });
+const drop = (e) => {
+  const t = dragging && [...e.changedTouches].find((t) => t.identifier === dragging.id);
+  if (!t) return;
+  dragging = null;
+  const onGround = document.elementFromPoint(t.clientX, t.clientY) === canvas;
+  if (onGround && latest && slot >= 0) {
+    Object.assign(mouse, { x: t.clientX, y: t.clientY - 40, left: !removing, right: removing });
+    follow(0); // world position of the release point
+    lastOrder = '';
+    order();
+    if (ghostWhy && !removing) say(WHY[ghostWhy]);
+  }
+  mouse.left = mouse.right = false;
+  setBuild(null);
+};
+addEventListener('touchend', drop);
+addEventListener('touchcancel', drop);
+$('auto').onclick = () => {
+  if (!latest || slot < 0) return;
+  const h = latest.heroes[slot], piece = h.alive ? nextPiece(latest, h) : null;
+  if (!h.alive) say('You are down');
+  else if (!piece) say('Nothing to build: save up more Scrap');
+  else if (!piece.ready) say('Go closer to your Ember to build');
+  else sendInput({ build: { type: piece.type, cx: piece.cx, cy: piece.cy } });
+};
+
+function showSettings() {
+  for (const b of $('settings').querySelectorAll('[data-build]')) b.classList.toggle('on', b.dataset.build === prefs.build);
+  $('soundSet').textContent = sound.muted() ? 'Sound: off' : 'Sound: on';
+  document.body.classList.toggle('autobuild', prefs.build === 'auto');
+}
+$('gear').onclick = () => { $('settings').hidden = !$('settings').hidden; showSettings(); };
+$('settingsDone').onclick = () => ($('settings').hidden = true);
+$('soundSet').onclick = () => { sound.toggle(); showSettings(); };
+for (const b of $('settings').querySelectorAll('[data-build]')) b.onclick = () => {
+  prefs.build = b.dataset.build;
+  try { localStorage.setItem('emberhold-prefs', JSON.stringify(prefs)); } catch { /* not remembered */ }
+  showSettings();
+};
+showSettings();
 $('again').onclick = () => send({ t: 'restart' });
 setInterval(sendInput, 33);
 
@@ -553,6 +612,7 @@ function draw(s, now) {
   for (const sh of s.shots) if (inView(sh)) art.shot(sh, X(sh.x), Y(sh.y));
   for (const f of s.fx) if (inView(f, 200)) art.fx(f, X(f.x), Y(f.y), f.r * PX);
   if (buildType && slot >= 0) drawGhost(X, Y);
+  if (touch.used && slot >= 0 && me.known) art.ring(X(me.x), Y(me.y), HEROES[s.heroes[slot].kind].gun.range * PX, 'rgba(255,255,255,0.4)', { gap: 4 }); // how far the automatic gun reaches
 }
 
 function frame(now) {

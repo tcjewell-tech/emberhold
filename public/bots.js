@@ -33,7 +33,7 @@ const BLUEPRINTS = TEAMS.map((T) => {
 });
 
 /** The next missing blueprint piece the team can afford, or null (save up, or nothing left). */
-function nextPiece(s, h) {
+export function nextPiece(s, h) {
   for (const p of BLUEPRINTS[h.team]) {
     if (structAt(s, p.cx, p.cy)) continue;
     if (s.teams[h.team].scrap < buildCost(h.kind, p.type)) return null;

@@ -18,9 +18,14 @@ use `npm run lan` and give them the address it prints.
 
 Turn it sideways and drag anywhere to move. Your hero aims, fires and scavenges wrecks by
 itself, choosing targets the way the bots do, so your thumbs are free to move and build. Tap
-Q and R for your ability and ultimate. To build, tap Wall, Turret or Spikes and then the
-ground (Remove switches to removing); tap the same button again to stop. The scoreboard and
-the sound switch are keyboard-only for now.
+Q and R for your ability and ultimate. A faint ring shows how far your gun reaches.
+
+Settings offers two ways to build on a touch screen:
+- **Drag to place:** drag Wall, Turret or Spikes onto the ground and let go (Remove switches
+  to removing).
+- **Auto-build:** one button builds the next piece of a ready-made base around your Ember.
+
+The scoreboard is keyboard-only for now.
 
 ## Play over the internet
 

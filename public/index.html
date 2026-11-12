@@ -108,6 +108,18 @@
   body.touch #q, body.touch #r, body.touch #build button { padding: 16px 14px; } /* big enough for a thumb */
   #rm { font: inherit; color: var(--text); }
   #rm.on { border-color: var(--bad); color: var(--bad); }
+  /* Auto-build style: one button in place of the three build buttons and Remove */
+  #auto { display: none !important; }
+  body.touch.autobuild #auto { display: block !important; font: inherit; color: var(--ink); background: var(--gold); border: 0; border-radius: 2px; padding: 16px 14px; }
+  body.touch.autobuild #build button[data-type], body.touch.autobuild #rm { display: none; }
+  #gear { position: fixed; top: 74px; right: 10px; font: inherit; color: var(--text); background: var(--panel); border: 2px solid var(--edge); border-radius: 4px; box-shadow: 0 0 0 2px var(--ink); padding: 6px 10px; cursor: pointer; }
+  body:not(.touch) #gear { top: auto; bottom: 12px; right: auto; left: 210px; }
+  #settings .sheet { gap: 12px; }
+  #settings button { font: inherit; color: var(--text); background: var(--ink); border: 2px solid var(--edge); border-radius: 2px; padding: 12px; cursor: pointer; text-align: left; }
+  #settings button small { display: block; color: var(--dim); font: 12px var(--plain); margin-top: 4px; }
+  #settings button.on { border-color: var(--gold); }
+  .choices { display: grid; gap: 8px; }
+  #settingsDone { background: var(--gold) !important; color: var(--ink) !important; text-align: center !important; }
   #touchtip { color: var(--dim); }
   .stick { position: fixed; width: 110px; height: 110px; margin: -55px 0 0 -55px; border: 3px solid rgba(238, 243, 248, 0.45); border-radius: 50%; pointer-events: none; }
   .stick i { position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; margin: -22px; border-radius: 50%; background: rgba(238, 243, 248, 0.55); }
@@ -148,6 +160,7 @@
     <button data-type="turret"><kbd>2</kbd> Turret<i class="num"></i></button>
     <button data-type="spikes"><kbd>3</kbd> Spikes<i class="num"></i></button>
     <button id="rm" class="touchonly">Remove</button>
+    <button id="auto" class="touchonly">Auto-build</button>
   </div>
   <canvas id="minimap" width="180" height="170"></canvas>
   <div id="banner" role="status" aria-live="polite"></div>
@@ -188,6 +201,19 @@
   </div>
 </section>
 
+<button id="gear" aria-label="Settings">Settings</button>
+<section id="settings" class="overlay" hidden>
+  <div class="sheet panel" style="width:min(460px,100%)">
+    <h2>Settings</h2>
+    <p>Build style on touch screens</p>
+    <div class="choices">
+      <button data-build="drag">Drag to place<small>Drag Wall, Turret or Spikes onto the ground</small></button>
+      <button data-build="auto">Auto-build<small>One button builds the next piece of a ready-made base</small></button>
+    </div>
+    <button id="soundSet"></button>
+    <button id="settingsDone">Done</button>
+  </div>
+</section>
 <div id="offline" hidden>Connection lost. Reconnecting…</div>
 <script>
   // Say so on screen when the game breaks: on a phone there is no console to look at.
