@@ -1,0 +1,10 @@
+# Render Blueprint: how render.com builds and runs the game. https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: emberhold
+    runtime: node
+    plan: free
+    branch: touch-controls
+    buildCommand: npm install
+    startCommand: npm run lan # listens on every interface and on Render's PORT
+    autoDeploy: true
