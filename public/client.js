@@ -5,7 +5,8 @@ import { interpolate } from './interp.js';
 import { createTimeline, createPredictor } from './net.js';
 import { PX, TILE, MOODS, ground, heroSprite, createArt } from './art.js';
 import { createSound } from './sound.js';
-import { createTouch, aimAssist } from './touch.js';
+import { createTouch } from './touch.js';
+import { botInput } from './bots.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls = '', text = '') => Object.assign(document.createElement(tag), { className: cls, textContent: text });
@@ -271,8 +272,8 @@ function hud() {
 
   const nearWreck = h.alive && s.wrecks.some((w) => Math.hypot(w.x - h.x, w.y - h.y) < SCAV_RANGE);
   $('hint').textContent = buildType
-    ? `${ghostWhy ? `${WHY[ghostWhy]}. ` : ''}Left-click places, right-click removes, Esc stops building`
-    : nearWreck ? 'Hold F to scavenge' : '';
+    ? `${ghostWhy ? `${WHY[ghostWhy]}. ` : ''}${touch.used ? 'Tap the ground to build. Tap the same button again to stop' : 'Left-click places, right-click removes, Esc stops building'}`
+    : nearWreck && !touch.used ? 'Hold F to scavenge' : '';
   if (performance.now() > bannerUntil) $('banner').style.opacity = 0;
   if (!$('scores').hidden) $('scores').firstElementChild.replaceChildren(scoreTable(s));
 }
@@ -315,7 +316,16 @@ function sendInput(extra) {
   if (slot < 0) return;
   const [mx, my] = moveVec();
   me.sent(++seq);
-  send({ t: 'input', seq, mx, my, aim: me.aim, fire: (mouse.left || touch.fire) && !buildType, use: keys.has('KeyF'), ...extra });
+  let fire = mouse.left && !buildType, use = keys.has('KeyF');
+  if (touch.used && latest) {
+    // On touch the hero aims, fires and scavenges by itself, picking targets as the bots do, so thumbs are free to move and build.
+    const h = latest.heroes[slot], auto = botInput(latest, slot, false);
+    fire = auto.fire;
+    use = h.alive && latest.wrecks.some((w) => Math.hypot(w.x - h.x, w.y - h.y) < SCAV_RANGE);
+    if (fire) me.aim = auto.aim;
+    else if (mx || my) me.aim = Math.atan2(my, mx); // nothing to shoot: face the way we walk
+  }
+  send({ t: 'input', seq, mx, my, aim: me.aim, fire, use, ...extra });
 }
 
 function setBuild(type) {
@@ -385,7 +395,7 @@ canvas.addEventListener('mousedown', (e) => {
 });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-// Touch: sticks for moving and aiming; in build mode a touch on the right half points at a cell.
+// Touch: a stick for moving; in build mode a tap points at a cell. Aim, fire and scavenge are automatic (see sendInput).
 let removing = false;
 const touch = createTouch(canvas, {
   building: () => buildType !== null,
@@ -399,13 +409,6 @@ if (matchMedia('(pointer: coarse)').matches) document.body.classList.add('touch'
 $('q').onclick = () => sendInput({ q: true });
 $('r').onclick = () => sendInput({ r: true });
 $('rm').onclick = () => $('rm').classList.toggle('on', (removing = !removing));
-for (const [type, on] of [['touchstart', true], ['touchend', false], ['touchcancel', false]]) {
-  $('use').addEventListener(type, (e) => {
-    e.preventDefault();
-    keys[on ? 'add' : 'delete']('KeyF');
-    sendInput();
-  }, { passive: false });
-}
 for (const b of $('build').querySelectorAll('button')) b.onclick = () => setBuild(buildType === b.dataset.type ? null : b.dataset.type);
 $('again').onclick = () => send({ t: 'restart' });
 setInterval(sendInput, 33);
@@ -440,12 +443,7 @@ function follow(dt) {
   cam.x = clamp(cam.x, Math.min(hw, WORLD.w / 2), Math.max(WORLD.w - hw, WORLD.w / 2));
   cam.y = clamp(cam.y, Math.min(hh, WORLD.h / 2), Math.max(WORLD.h - hh, WORLD.h / 2));
   Object.assign(mouse, { wx: toWorld(mouse.x, mouse.y).x, wy: toWorld(mouse.x, mouse.y).y });
-  if (!touch.used) me.aim = Math.atan2(mouse.wy - me.y, mouse.wx - me.x);
-  else if (touch.aim !== null && h) {
-    // A thumb is less exact than a mouse: snap to a hostile near the line of fire.
-    const hostiles = [...latest.enemies, ...latest.heroes.filter((o) => o.alive && o.team !== h.team)];
-    me.aim = aimAssist(touch.aim, me, hostiles, HEROES[h.kind].gun.range);
-  } else if (mx || my) me.aim = Math.atan2(my, mx); // not aiming: face the way we walk
+  if (!touch.used) me.aim = Math.atan2(mouse.wy - me.y, mouse.wx - me.x); // on touch, sendInput aims
 }
 
 // ---------------------------------------------------------------- drawing

@@ -104,8 +104,9 @@
   .touchonly { display: none; }
   body.touch .touchonly { display: block; }
   body.touch #controls { display: none; }
-  body.touch #q, body.touch #r, #use { cursor: pointer; touch-action: manipulation; }
-  #use, #rm { font: inherit; color: var(--text); }
+  body.touch #q, body.touch #r { cursor: pointer; touch-action: manipulation; }
+  body.touch #q, body.touch #r, body.touch #build button { padding: 16px 14px; } /* big enough for a thumb */
+  #rm { font: inherit; color: var(--text); }
   #rm.on { border-color: var(--bad); color: var(--bad); }
   #touchtip { color: var(--dim); }
   .stick { position: fixed; width: 110px; height: 110px; margin: -55px 0 0 -55px; border: 3px solid rgba(238, 243, 248, 0.45); border-radius: 50%; pointer-events: none; }
@@ -139,7 +140,6 @@
     <div id="hp" class="panel"><span><b id="meName"></b><b id="meHp" class="num"></b></span><div class="bar"><i></i></div></div>
     <div id="q" class="panel key"><kbd>Q</kbd><b></b><span class="num"></span></div>
     <div id="r" class="panel key"><kbd>R</kbd><b></b><span class="num"></span></div>
-    <button id="use" class="panel touchonly">Scavenge</button>
   </div>
   <div id="build" class="panel">
     <div id="scrap">Scrap<b class="num">0</b></div>
@@ -152,8 +152,7 @@
   <div id="banner" role="status" aria-live="polite"></div>
   <div id="hint"></div>
 </div>
-<div id="stickL" class="stick" hidden><i></i></div>
-<div id="stickR" class="stick" hidden><i></i></div>
+<div id="stick" class="stick" hidden><i></i></div>
 <div id="rotate">Turn your phone sideways to play</div>
 
 <div id="scores" class="overlay" hidden><div class="sheet panel"></div></div>
@@ -165,7 +164,7 @@
     <p id="tip">Three teams each guard an Ember. AI enemies attack every night; rival heroes can attack any time. The last Ember standing wins. Bots play every hero nobody picks, but bots on your team never spend Scrap: building is your job.</p>
     <div id="teams"></div>
     <p id="note"></p>
-    <p id="touchtip" class="touchonly">Left thumb moves. Right thumb aims and fires. Tap Q and R for your ability and ultimate, hold Scavenge at a wreck, and tap Wall, Turret or Spikes, then the ground, to build.</p>
+    <p id="touchtip" class="touchonly">Drag anywhere to move. Your hero aims, fires and scavenges wrecks by itself. Tap Q and R for your ability and ultimate. To build, tap Wall, Turret or Spikes, then tap the ground.</p>
     <div id="controls">
       <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</span>
       <span><kbd>Mouse</kbd> aim, left-click fire</span>

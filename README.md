@@ -16,11 +16,11 @@ use `npm run lan` and give them the address it prints.
 
 ### On a phone or tablet
 
-Turn it sideways. Your left thumb moves and your right thumb aims and fires; a stick appears
-wherever each thumb lands. Tap Q and R for your ability and ultimate, hold Scavenge at a wreck,
-and tap Wall, Turret or Spikes and then the ground to build (Remove switches to removing).
-Touch aim snaps to a hostile near where you point, to make up for a thumb being less exact
-than a mouse. The scoreboard and the sound switch are keyboard-only for now.
+Turn it sideways and drag anywhere to move. Your hero aims, fires and scavenges wrecks by
+itself, choosing targets the way the bots do, so your thumbs are free to move and build. Tap
+Q and R for your ability and ultimate. To build, tap Wall, Turret or Spikes and then the
+ground (Remove switches to removing); tap the same button again to stop. The scoreboard and
+the sound switch are keyboard-only for now.
 
 ## Play over the internet
 
