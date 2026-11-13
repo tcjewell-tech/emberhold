@@ -4,7 +4,7 @@ services:
     name: emberhold
     runtime: node
     plan: free
-    branch: touch-controls
+    branch: main
     buildCommand: npm install
     startCommand: npm run lan # listens on every interface and on Render's PORT
     autoDeploy: true
