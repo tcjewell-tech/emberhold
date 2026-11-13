@@ -46,9 +46,9 @@
   .mate.down { opacity: 0.5; }
 
   #me { bottom: 12px; left: 50%; transform: translateX(-50%); display: flex; gap: 12px; align-items: center; }
-  #hp { width: 250px; }
+  #hp { min-width: 250px; white-space: nowrap; }
   #hp .bar { height: 12px; --team: var(--good); }
-  #hp span { display: flex; justify-content: space-between; margin-bottom: 4px; }
+  #hp span { display: flex; justify-content: space-between; gap: 14px; margin-bottom: 4px; }
   #meName { color: var(--team); }
   .key { min-width: 134px; display: grid; grid-template-columns: auto 1fr; gap: 0 8px; align-items: center; }
   .key span { grid-column: 2; color: var(--dim); }

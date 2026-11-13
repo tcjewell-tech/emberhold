@@ -169,6 +169,13 @@ export function botInput(s, i, spend = true) {
     }
   }
 
+  // A power-up close by is worth a short detour, unless the bot is busy healing or hurt and heading for help.
+  const pick = (s.pickups || []).filter((p) => gap(h, p) < 260 && (!night || gap(p, em) < LEASH + 100)).sort((a, c) => gap(h, a) - gap(h, c))[0];
+  if (pick && !fixed) {
+    goal = pick;
+    stopAt = 0;
+  }
+
   // What to shoot: the weakest hostile unit in range (finish kills), else a rival Turret, Ember or Wall in range.
   const turret = foeD <= gun.range ? null : nearestRivalTurret(s, h, gun.range);
   const target = weakestHostile(s, h, gun.range) || turret || rivalThing(s, h, gun.range);

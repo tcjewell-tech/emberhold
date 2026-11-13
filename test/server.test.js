@@ -142,7 +142,7 @@ test('malformed and hostile messages are ignored and the match carries on', asyn
   const s1 = (await a.next(stateAfter(s0.t + 0.3), 'the match to carry on')).s;
   const me = s1.heroes[AMBER_DART];
   assert.ok([me.x, me.y, me.aim, me.hp].every(Number.isFinite));
-  assert.equal(s1.structs.filter((st) => st.team === 0).length, 0, 'nothing got built');
+  assert.ok(s1.structs.every((st) => Number.isInteger(st.cx) && st.cx >= 0 && Number.isInteger(st.cy)), 'nothing got built from the junk');
   assert.ok(s1.teams.every((T) => Number.isInteger(T.scrap)));
 
   const fresh = await connect(port);
@@ -150,14 +150,12 @@ test('malformed and hostile messages are ignored and the match carries on', asyn
   await Promise.all([a.close(), fresh.close()]);
 });
 
-test('bots on a team with a human never spend its Scrap; all-bot teams build', async (t) => {
+test('bots build on every team, including one with a human on it', async (t) => {
   const { port } = await withServer(t);
   const a = await connect(port);
   a.send({ t: 'join', slot: AMBER_DART });
   const { s } = await a.next(stateAfter(2), 'two seconds of play');
-  const built = (team) => s.structs.filter((st) => st.team === team && st.ttl === 0).length;
-  assert.equal(built(0), 0);
-  assert.ok(built(1) > 0 && built(2) > 0);
+  for (const team of [0, 1, 2]) assert.ok(s.structs.some((st) => st.team === team && st.ttl === 0), `team ${team} built`);
   await a.close();
 });
 

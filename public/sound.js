@@ -42,6 +42,7 @@ export function createSound() {
     Ultimate: () => { chord([196, 294, 392], { len: 0.5, vol: 0.16 }); note({ type: 'sine', f: 392, to: 1568, len: 0.4, vol: 0.14 }); },
     Build: () => { note({ type: 'noise', f: 700, len: 0.05, vol: 0.3 }); seq([220, 330], 0.06, { vol: 0.22 }); },
     Scavenge: () => seq([880, 1175, 1568], 0.05, { type: 'sine', vol: 0.12 }),
+    'Power-up': () => seq([659, 784, 988, 1319], 0.045, { type: 'square', vol: 0.08 }),
     'Hero down': () => seq([392, 330, 262, 196], 0.11, { vol: 0.22 }),
     'Ember hit': () => { note({ type: 'sine', f: 96, to: 60, len: 0.3, vol: 0.5 }); note({ type: 'noise', f: 400, len: 0.2, vol: 0.25 }); },
     'Night falls': () => { chord([110, 165], { type: 'sine', len: 1.6, vol: 0.2 }); seq([330, 311, 262, 247, 196], 0.2, { vol: 0.2 }); },

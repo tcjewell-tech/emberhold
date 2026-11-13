@@ -155,10 +155,9 @@ export async function startServer({
   }, beat);
 
   function tick() {
-    const manned = [0, 1, 2].map((team) => [0, 1, 2, 3].some((k) => seats.has(team * 4 + k)));
     const inputs = game.heroes.map((h) => {
       const seat = seats.get(h.i);
-      if (!seat) return botInput(game, h.i, !manned[h.team]); // bots never spend a human team's Scrap
+      if (!seat) return botInput(game, h.i); // bots build on every team, a human's included
       const inp = { ...seat.held, q: seat.q, r: seat.r, ...seat.orders.shift() };
       seat.q = seat.r = false;
       return inp;

@@ -68,13 +68,69 @@ test('every team has the same wrecks on its doorstep', () => {
   }
 });
 
-test('a hero moves at its own speed and stops at the world edge', () => {
+test('a hero moves at its own speed and stops at the edge of the round arena', () => {
   const g = arena();
   const h = place(g.heroes[AMBER + DART], 1000, 1000);
   run(g, 1, { [AMBER + DART]: { mx: 1, my: 0 } });
   assert.ok(Math.abs(h.x - (1000 + S.HEROES.dart.speed)) < 1);
   run(g, 30, { [AMBER + DART]: { mx: 1, my: 0 } });
-  assert.equal(h.x, S.WORLD.w - S.HERO_R);
+  assert.ok(Math.abs(gap(h, S.ARENA) - (S.ARENA.r - S.HERO_R)) < 0.01, 'held at the shore');
+  assert.ok(h.x < S.WORLD.w - 200, 'well short of the old square edge');
+});
+
+test('the arena is round: nothing is built, spawned or shot beyond its edge', () => {
+  const g = arena();
+  const corner = { x: 60, y: 60 }; // a corner of the old square map, out over the water
+  assert.equal(S.inArena(corner.x, corner.y), false);
+  const h = place(g.heroes[AMBER + COG], S.ARENA.x, S.ARENA.y - S.ARENA.r + 100);
+  const cx = Math.floor(h.x / S.CELL), cy = Math.floor((S.ARENA.y - S.ARENA.r - 30) / S.CELL);
+  g.teams[0].scrap = 1000;
+  assert.equal(S.canBuild(g, h.i, 'wall', cx, cy), 'bounds');
+  const e = S.spawnEnemy(g, 'skitter', 0, corner.x, corner.y);
+  assert.ok(S.inArena(e.x, e.y), 'a spawn out over the water comes ashore');
+  for (const T of S.TEAMS) assert.ok(gap(T, S.ARENA) < S.ARENA.r - 400, 'every Ember has room behind it');
+  const d = S.TEAMS.map((T) => gap(T, S.ARENA));
+  assert.ok(Math.max(...d) - Math.min(...d) < 30, 'and they sit about equally far from the middle');
+});
+
+test('AI enemies sometimes drop power-ups; any hero who walks over one gets its effect', () => {
+  const g = arena();
+  const dart = place(g.heroes[AMBER + DART], 1500, 1500);
+  let drops = 0;
+  for (let k = 0; k < 40; k++) { // the Colossus always drops; Breakers often
+    const e = S.spawnEnemy(g, k ? 'breaker' : 'colossus', 0, 1500, 1200);
+    e.hp = 1;
+    g.shots.push({ id: g.nextId++, x: e.x, y: e.y, vx: 0, vy: 0, ttl: 1, dmg: 5, team: 0, owner: dart.i });
+    S.step(g, [], DT);
+    drops = g.pickups.length;
+  }
+  assert.ok(drops >= 5 && drops < 40, `${drops} drops from 40 kills`);
+  assert.ok(g.pickups.every((p) => p.kind in S.POWERUPS && p.ttl > 0));
+
+  g.pickups = [{ id: 1, kind: 'rush', x: 1500, y: 1500, ttl: 5 }];
+  S.step(g, [], DT);
+  assert.equal(g.pickups.length, 0);
+  assert.ok(dart.rush > 9, 'Rush is on');
+  const x0 = dart.x;
+  run(g, 1, { [dart.i]: { mx: 1, my: 0 } });
+  assert.ok(Math.abs(dart.x - x0 - S.HEROES.dart.speed * S.POWERUPS.rush.speed) < 2, 'and the hero runs 40% faster');
+
+  dart.hp = 20;
+  g.pickups = [{ id: 2, kind: 'mend', x: dart.x, y: dart.y, ttl: 5 }];
+  S.step(g, [], DT);
+  assert.equal(dart.hp, 20 + dart.max * S.POWERUPS.mend.heal, 'Mend heals half');
+
+  g.pickups = [{ id: 3, kind: 'fury', x: 3000, y: 3000, ttl: 0.5 }];
+  run(g, 1);
+  assert.equal(g.pickups.length, 0, 'an untouched power-up fades');
+});
+
+test('Fury makes gun shots hit harder', () => {
+  const g = arena();
+  const dart = place(g.heroes[AMBER + DART], 1500, 1500);
+  dart.fury = 5;
+  S.step(g, { [dart.i]: { fire: true, aim: 0 } }, DT);
+  assert.equal(g.shots.at(-1).dmg, S.HEROES.dart.gun.dmg * S.POWERUPS.fury.mult);
 });
 
 test('moving diagonally is no faster than moving straight', () => {

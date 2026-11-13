@@ -1,7 +1,7 @@
 // Emberhold's pixel art, drawn in code: no image files. Everything here works in art pixels
 // (one art pixel is two world units; the page scales the small canvas up with hard edges).
 // Sprites are painted once on their own little canvas, outlined, and cached.
-import { TEAMS, WORLD, CELL } from './sim.js';
+import { TEAMS, WORLD, CELL, ARENA, inArena } from './sim.js';
 
 export const PX = 0.5; // art pixels per world unit
 export const TILE = CELL * PX;
@@ -9,9 +9,9 @@ const INK = '#1b1e30', STEEL = '#8794ab', SKIN = '#eec39a', PURPLE = '#8a63e6';
 
 /** Each match wears one of these, chosen from its seed. */
 export const MOODS = [
-  { name: 'Frostfall', g: '#b4c6d8', hi: '#d6e3ee', lo: '#96abc4', det: '#7d93af', panel: '#1e2740', panel2: '#2a3554', edge: '#5b6b93', night: '12,18,52', warm: '#e9d2b0' },
-  { name: 'Thaw', g: '#98a58d', hi: '#dfe7e6', lo: '#7f8c78', det: '#5f6c5d', panel: '#27241f', panel2: '#373129', edge: '#84735a', night: '14,20,40', warm: '#c9b98f' },
-  { name: 'Dusk', g: '#c2b2cf', hi: '#eedadb', lo: '#9f90ba', det: '#8172a2', panel: '#281f3e', panel2: '#382b54', edge: '#8068a8', night: '26,14,54', warm: '#eccdb5' },
+  { name: 'Frostfall', g: '#b4c6d8', hi: '#d6e3ee', lo: '#96abc4', det: '#7d93af', water: '#2c4a6e', panel: '#1e2740', panel2: '#2a3554', edge: '#5b6b93', night: '12,18,52', warm: '#e9d2b0' },
+  { name: 'Thaw', g: '#98a58d', hi: '#dfe7e6', lo: '#7f8c78', det: '#5f6c5d', water: '#2f4f4a', panel: '#27241f', panel2: '#373129', edge: '#84735a', night: '14,20,40', warm: '#c9b98f' },
+  { name: 'Dusk', g: '#c2b2cf', hi: '#eedadb', lo: '#9f90ba', det: '#8172a2', water: '#3b2f5c', panel: '#281f3e', panel2: '#382b54', edge: '#8068a8', night: '26,14,54', warm: '#eccdb5' },
 ];
 
 const rgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
@@ -115,7 +115,7 @@ const grounds = [];
 export function ground(mood) {
   if (grounds[mood]) return grounds[mood];
   const M = MOODS[mood], w = WORLD.w * PX, h = WORLD.h * PX, c = newCanvas(w, h), x = c.getContext('2d'), img = x.createImageData(w, h), d = img.data;
-  const tones = [M.lo, mix(M.g, M.lo, 0.5), M.g, mix(M.g, M.hi, 0.5), M.hi, mix(M.warm, M.g, 0.5), M.warm].map(rgb);
+  const tones = [M.lo, mix(M.g, M.lo, 0.5), M.g, mix(M.g, M.hi, 0.5), M.hi, mix(M.warm, M.g, 0.5), M.warm, M.water, lit(M.water, 0.2), lit(M.lo, -0.35), M.hi].map(rgb);
   const grid = (n, ox) => { const cols = Math.ceil(w / n) + 2, rows = Math.ceil((h * 1.5) / n) + 2, v = new Float32Array(cols * rows); for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) v[j * cols + i] = hash(i + ox, j); return { n, cols, v }; };
   const ease = (t) => t * t * (3 - 2 * t);
   const noise = (G, px, py) => { const gx = Math.floor(px / G.n), gy = Math.floor(py / G.n), fx = ease(px / G.n - gx), fy = ease(py / G.n - gy), i = gy * G.cols + gx, a = G.v[i], b = G.v[i + 1], cc = G.v[i + G.cols], dd = G.v[i + G.cols + 1]; return a + (b - a) * fx + (cc - a) * fy + (a - b - cc + dd) * fx * fy; };
@@ -123,6 +123,9 @@ export function ground(mood) {
   for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
     const n = noise(big, i, j * 1.5) * 0.65 + noise(small, i, j * 1.5) * 0.35;
     let t = n > 0.7 ? 4 : n > 0.62 ? 3 : n < 0.29 ? 0 : n < 0.36 ? 1 : 2;
+    // Beyond the arena's edge: a dark shore, a line of surf, then open water with ripples.
+    const out = Math.hypot(i / PX - ARENA.x, j / PX - ARENA.y) - ARENA.r;
+    if (out > -6) t = out < 0 ? 9 : out < 4 ? 10 : n > 0.66 && hash(i >> 2, j) < 0.5 ? 8 : 7;
     for (const T of TEAMS) {
       const dx = i - T.x * PX, dy = (j - T.y * PX) * 1.25;
       if (Math.abs(dx) > 60 || Math.abs(dy) > 60) continue;
@@ -137,6 +140,7 @@ export function ground(mood) {
   const s = pen(x);
   for (let j = 0; j < h; j += 5) for (let i = 0; i < w; i += 5) {
     const r = hash(i + 7, j + 3);
+    if (!inArena(i / PX, j / PX, 12)) continue;
     if (r < 0.02) { s.R(i, j, 3, 1, M.det); s.R(i + 1, j - 1, 1, 1, M.det); }
     else if (r < 0.03) { s.E(i, j, 2.5, 1.8, lit(M.det, -0.2)); s.R(i - 1, j - 1, 2, 1, lit(M.det, 0.4)); }
     else if (r < 0.05) s.R(i, j, 2, 1, M.hi);
@@ -172,6 +176,8 @@ export function createArt(g) {
       shadow(x, y, 9);
       if (h.fortify > 0) ring(x, y - 10, 19, '#ffe9a8', { gap: 2, a0: t / 300, thick: 2 });
       if (h.overdrive > 0) ring(x, y - 10, 17, '#ff7ad9', { gap: 3, a0: -t / 120, thick: 2 });
+      if (h.rush > 0) ring(x, y - 10, 15, '#5ad1ff', { gap: 4, a0: t / 90, thick: 2 });
+      if (h.fury > 0) ring(x, y - 10, 21, '#ff5a4f', { gap: 5, a0: -t / 200, thick: 2 });
       if (Math.sin(aim) < 0) gun(h.kind, x, y, aim);
       put(heroSprite(h.kind, h.team, walking ? 1 + (Math.floor(t / 180) % 2) : 0), x, y + 1);
       if (Math.sin(aim) >= 0) gun(h.kind, x, y, aim);
@@ -235,6 +241,18 @@ export function createArt(g) {
       meter(x - 20, y + 19, 40, frac, T, 3);
     },
     wreck(x, y) { shadow(x, y + 3, 22); put(wreckSprite(), x, y + 8); },
+    /** A dropped power-up: a bobbing gem in its colour, blinking as it is about to fade. */
+    pickup(p, x, y, t) {
+      if (p.ttl < 4 && Math.floor(t / 150) % 2) return;
+      const col = { rush: '#5ad1ff', fury: '#ff5a4f', mend: '#63d07a' }[p.kind], bob = Math.round(Math.sin(t / 250 + p.id) * 2), gy = y - 9 + bob;
+      shadow(x, y, 6);
+      this.glow(x, gy, 16, col, 0.5);
+      S.E(x, gy, 7, 7, INK); S.ball(x, gy, 6, 6, col);
+      const W = '#ffffff';
+      if (p.kind === 'mend') { S.R(x - 1, gy - 3, 2, 6, W); S.R(x - 3, gy - 1, 6, 2, W); }
+      else if (p.kind === 'rush') { S.R(x - 3, gy - 2, 1, 1, W); S.R(x - 2, gy - 1, 1, 1, W); S.R(x - 3, gy, 1, 1, W); S.R(x, gy - 2, 1, 1, W); S.R(x + 1, gy - 1, 1, 1, W); S.R(x, gy, 1, 1, W); }
+      else { S.R(x - 1, gy - 3, 2, 2, W); S.R(x - 2, gy - 1, 4, 2, W); S.R(x - 1, gy + 1, 2, 2, W); }
+    },
     shot(sh, x, y) {
       const col = sh.team < 0 ? '#b9f27c' : TEAMS[sh.team].color, a = Math.atan2(sh.vy, sh.vx);
       for (let k = 1; k <= 7; k++) { g.globalAlpha = 1 - k / 8; S.R(x - Math.cos(a) * k * 1.5 - 1, y - Math.sin(a) * k * 1.5 - 1, k < 3 ? 2 : 1, k < 3 ? 2 : 1, col); }

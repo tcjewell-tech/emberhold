@@ -13,6 +13,28 @@ export const TEAMS = [
   { name: 'Jade', color: '#4fd69c', x: 840, y: 2360 },
 ];
 
+/** The playable ground is a circle centred on the three Embers; outside it is open water. */
+export const ARENA = { x: (TEAMS[0].x + TEAMS[1].x + TEAMS[2].x) / 3, y: (TEAMS[0].y + TEAMS[1].y + TEAMS[2].y) / 3, r: 1580 };
+export const inArena = (x, y, pad = 0) => (x - ARENA.x) ** 2 + (y - ARENA.y) ** 2 <= (ARENA.r - pad) ** 2;
+/** Move a unit straight back inside the circle, pad from its edge. */
+function keepIn(o, pad) {
+  const dx = o.x - ARENA.x, dy = o.y - ARENA.y, d = Math.hypot(dx, dy), max = ARENA.r - pad;
+  if (d > max) {
+    o.x = ARENA.x + (dx / d) * max;
+    o.y = ARENA.y + (dy / d) * max;
+  }
+}
+
+/** Temporary power-ups AI enemies sometimes drop. Any hero can grab one, rivals included. */
+export const POWERUPS = {
+  rush: { name: 'Rush', time: 10, speed: 1.4, text: '10 s: 40% faster' },
+  fury: { name: 'Fury', time: 10, mult: 1.5, text: '10 s: 50% more gun damage' },
+  mend: { name: 'Mend', heal: 0.5, text: 'Heal half your health' },
+};
+export const PICKUP_TTL = 20; // seconds a dropped power-up lies before it fades
+export const PICKUP_R = 26; // how close a hero must walk to grab one
+const DROP = { skitter: 0.03, spitter: 0.06, breaker: 0.25, colossus: 1 };
+
 export const DAY_LENGTH = 50;
 export const RESPAWN = 8;
 export const START_SCRAP = 60;
@@ -81,6 +103,9 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const dist2 = (ax, ay, bx, by) => (ax - bx) * (ax - bx) + (ay - by) * (ay - by);
 const cellOf = (v) => Math.floor(v / CELL);
 const inGrid = (cx, cy) => cx >= 0 && cy >= 0 && cx < COLS && cy < ROWS;
+// Cells whose centre is on the ground: the only ones that can be built on or walked by pathing.
+const LAND = Uint8Array.from({ length: COLS * ROWS }, (_, i) => inArena((i % COLS) * CELL + CELL / 2, Math.floor(i / COLS) * CELL + CELL / 2, CELL / 2));
+const onLand = (cx, cy) => inGrid(cx, cy) && LAND[cy * COLS + cx] === 1;
 const num = (v) => (Number.isFinite(v) ? v : 0);
 
 /** Seeded RNG (mulberry32). Its state lives in the match so a replay is exact. */
@@ -102,14 +127,14 @@ export function createGame(seed = 1) {
     // mood: which of the three colour moods the match wears. s.seed cannot say: it moves on with every random number.
     t: 0, seed: seed | 0, mood: Math.abs(seed | 0) % 3, phase: 'day', wave: 0, timer: DAY_LENGTH, winner: null, nextId: 1, sv: 0,
     teams: TEAMS.map((T) => ({ scrap: START_SCRAP, alive: true, overclock: 0, ember: { x: T.x, y: T.y, hp: EMBER_HP, max: EMBER_HP } })),
-    heroes: [], enemies: [], shots: [], structs: [], wrecks: [], fx: [], spawn: [],
+    heroes: [], enemies: [], shots: [], structs: [], wrecks: [], pickups: [], fx: [], spawn: [],
   };
   for (let team = 0; team < TEAMS.length; team++) {
     HERO_IDS.forEach((kind, k) => {
       const hp = HEROES[kind].hp, shield = HEROES[kind].shield?.max ?? 0;
       s.heroes.push({
         i: team * 4 + k, team, kind, ...post(team, k), aim: 0, hp, max: hp, alive: true, out: false, respawn: 0,
-        shield, shieldMax: shield, shieldCd: 0, fireCd: 0, qCd: 0, ult: 0, fortify: 0, overdrive: 0, stun: 0, scav: 0, scavId: 0,
+        shield, shieldMax: shield, shieldCd: 0, fireCd: 0, qCd: 0, ult: 0, fortify: 0, overdrive: 0, rush: 0, fury: 0, stun: 0, scav: 0, scavId: 0,
         stats: { dmg: 0, heal: 0, scrap: 0, kills: 0, pvp: 0, deaths: 0 },
       });
     });
@@ -176,7 +201,7 @@ function flow(s, team) {
     const enter = c.wall[i] ? WALL_COST : 0;
     for (const [dx, dy] of DIRS) {
       const nx = x + dx, ny = y + dy;
-      if (!inGrid(nx, ny)) continue;
+      if (!onLand(nx, ny)) continue;
       if (dx && dy && (c.wall[y * COLS + nx] || c.wall[ny * COLS + x])) continue; // no squeezing past wall corners
       const nd = d[i] + (dx && dy ? 1.414 : 1) + enter;
       const n = ny * COLS + nx;
@@ -197,7 +222,7 @@ function flowTarget(s, team, x, y) {
   let best = Infinity, bx = cx, by = cy;
   for (const [dx, dy] of DIRS) {
     const nx = cx + dx, ny = cy + dy;
-    if (!inGrid(nx, ny)) continue;
+    if (!onLand(nx, ny)) continue;
     if (dx && dy && (c.wall[cy * COLS + nx] || c.wall[ny * COLS + cx])) continue;
     const n = ny * COLS + nx;
     const v = d[n] + (dx && dy ? 1.414 : 1) + (c.wall[n] ? WALL_COST : 0);
@@ -213,7 +238,7 @@ function flowTarget(s, team, x, y) {
 /** Shove a unit, unless that would put it inside a blocking structure. */
 function nudge(s, o, dx, dy) {
   const x = clamp(o.x + dx, HERO_R, WORLD.w - HERO_R), y = clamp(o.y + dy, HERO_R, WORLD.h - HERO_R);
-  if (!cache(s).wall[cellOf(y) * COLS + cellOf(x)]) {
+  if (inArena(x, y, HERO_R) && !cache(s).wall[cellOf(y) * COLS + cellOf(x)]) {
     o.x = x;
     o.y = y;
   }
@@ -274,6 +299,10 @@ function hurtEnemy(s, e, dmg, team, owner) {
   if (team >= 0) s.teams[team].scrap += ENEMIES[e.type].bounty;
   if (owner >= 0) s.heroes[owner].stats.kills++;
   addFx(s, 'pop', e.x, e.y, ENEMIES[e.type].r * 2, -1);
+  if (rand(s) < DROP[e.type]) {
+    const kinds = Object.keys(POWERUPS);
+    s.pickups.push({ id: s.nextId++, kind: kinds[Math.floor(rand(s) * kinds.length)], x: e.x, y: e.y, ttl: PICKUP_TTL });
+  }
 }
 
 function hurtHero(s, h, dmg, team, owner) {
@@ -285,7 +314,7 @@ function hurtHero(s, h, dmg, team, owner) {
   h.shield -= soaked;
   h.hp -= dmg - soaked;
   if (h.hp > 0) return;
-  Object.assign(h, { hp: 0, alive: false, respawn: RESPAWN, fortify: 0, overdrive: 0, stun: 0, scav: 0, scavId: 0 });
+  Object.assign(h, { hp: 0, alive: false, respawn: RESPAWN, fortify: 0, overdrive: 0, rush: 0, fury: 0, stun: 0, scav: 0, scavId: 0 });
   h.stats.deaths++;
   if (team >= 0) s.teams[team].scrap += HERO_BOUNTY;
   if (owner >= 0) s.heroes[owner].stats.pvp++;
@@ -349,6 +378,7 @@ export function moveHero(s, h, dx, dy) {
   if (open(nx, h.y)) h.x = nx;
   const ny = clamp(h.y + dy, HERO_R, WORLD.h - HERO_R);
   if (open(h.x, ny)) h.y = ny;
+  keepIn(h, HERO_R);
 }
 
 export function buildCost(kind, type) {
@@ -367,7 +397,7 @@ export function canBuild(s, i, type, cx, cy) {
   const h = s.heroes[i];
   if (!h || !h.alive) return 'down';
   if (!Object.hasOwn(STRUCTS, type)) return 'type';
-  if (!Number.isInteger(cx) || !Number.isInteger(cy) || !inGrid(cx, cy)) return 'bounds';
+  if (!Number.isInteger(cx) || !Number.isInteger(cy) || !onLand(cx, cy)) return 'bounds';
   const x = cx * CELL + CELL / 2, y = cy * CELL + CELL / 2;
   if (dist2(h.x, h.y, x, y) > BUILD_RANGE * BUILD_RANGE) return 'range';
   if (structAt(s, cx, cy)) return 'occupied';
@@ -426,7 +456,7 @@ function ability(s, h, mx, my) {
     const cx = cellOf(h.x), cy = cellOf(h.y);
     const spot = [[0, 0], ...DIRS].find(([dx, dy]) => {
       const x = (cx + dx) * CELL + CELL / 2, y = (cy + dy) * CELL + CELL / 2;
-      return inGrid(cx + dx, cy + dy) && !structAt(s, cx + dx, cy + dy) && !nearLivingEmber(s, x, y, 60, -1) && !hostileInCell(s, h.team, cx + dx, cy + dy);
+      return onLand(cx + dx, cy + dy) && !structAt(s, cx + dx, cy + dy) && !nearLivingEmber(s, x, y, 60, -1) && !hostileInCell(s, h.team, cx + dx, cy + dy);
     });
     if (!spot) return false;
     const st = addStruct(s, 'turret', h.team, cx + spot[0], cy + spot[1], q.ttl);
@@ -472,6 +502,8 @@ function updateHero(s, h, raw, dt) {
   h.qCd = Math.max(0, h.qCd - dt);
   h.fortify = Math.max(0, h.fortify - dt);
   h.overdrive = Math.max(0, h.overdrive - dt);
+  h.rush = Math.max(0, h.rush - dt);
+  h.fury = Math.max(0, h.fury - dt);
   h.shieldCd = Math.max(0, h.shieldCd - dt);
   if (h.shieldCd === 0 && h.shield < h.shieldMax) h.shield = Math.min(h.shieldMax, h.shield + HEROES[h.kind].shield.rate * dt);
   if (h.stun > 0) {
@@ -487,7 +519,8 @@ function updateHero(s, h, raw, dt) {
     mx /= len;
     my /= len;
   }
-  moveHero(s, h, mx * def.speed * dt, my * def.speed * dt);
+  const speed = def.speed * (h.rush > 0 ? POWERUPS.rush.speed : 1);
+  moveHero(s, h, mx * speed * dt, my * speed * dt);
 
   const under = structAt(s, cellOf(h.x), cellOf(h.y));
   if (under && under.type === 'spikes' && under.team !== h.team) {
@@ -500,7 +533,7 @@ function updateHero(s, h, raw, dt) {
   if (inp.fire && h.fireCd <= 0) {
     const g = def.gun;
     h.fireCd += 1 / (g.rate * (h.overdrive > 0 ? HEROES.dart.r.mult : 1));
-    for (let p = 0; p < g.pellets; p++) shoot(s, h.x, h.y, h.aim + (rand(s) - 0.5) * g.spread, g.speed, g.range, g.dmg, h.team, h.i);
+    for (let p = 0; p < g.pellets; p++) shoot(s, h.x, h.y, h.aim + (rand(s) - 0.5) * g.spread, g.speed, g.range, g.dmg * (h.fury > 0 ? POWERUPS.fury.mult : 1), h.team, h.i);
   }
   if (inp.q && h.qCd <= 0 && ability(s, h, mx, my)) h.qCd = def.q.cd;
   if (inp.r && h.ult >= 100) ultimate(s, h);
@@ -553,7 +586,8 @@ function updateStructs(s, dt) {
 
 export function spawnEnemy(s, type, team, x, y) {
   const def = ENEMIES[type], hp = def.hp * (1 + 0.25 * Math.max(0, s.wave - 1));
-  const e = { id: s.nextId++, type, team, x: clamp(x, 20, WORLD.w - 20), y: clamp(y, 20, WORLD.h - 20), hp, max: hp, cd: 0, stun: 0 };
+  const e = { id: s.nextId++, type, team, x, y, hp, max: hp, cd: 0, stun: 0 };
+  keepIn(e, ENEMIES[type].r + 4); // a spawn point out over the water comes ashore at the edge
   if (def.slam) e.slam = def.slam.every;
   s.enemies.push(e);
   return e;
@@ -636,8 +670,9 @@ function updateEnemy(s, e, dt) {
     strike(() => hurtStruct(s, ahead, dmg * (def.structMult || 1), -1));
     return;
   }
-  e.x = clamp(e.x + ux * def.speed * dt, 8, WORLD.w - 8);
-  e.y = clamp(e.y + uy * def.speed * dt, 8, WORLD.h - 8);
+  e.x += ux * def.speed * dt;
+  e.y += uy * def.speed * dt;
+  keepIn(e, def.r);
 }
 
 /** Keep AI enemies from stacking on one spot. */
@@ -667,7 +702,7 @@ function updateShots(s, dt) {
     sh.x += sh.vx * dt;
     sh.y += sh.vy * dt;
     sh.ttl -= dt;
-    if (sh.ttl <= 0 || sh.x < 0 || sh.y < 0 || sh.x >= WORLD.w || sh.y >= WORLD.h) {
+    if (sh.ttl <= 0 || !inArena(sh.x, sh.y)) {
       sh.dead = true;
       continue;
     }
@@ -710,7 +745,7 @@ const FACING = TEAMS.map((T) => Math.atan2(CENTRE.y - T.y, CENTRE.x - T.x)); // 
  */
 function spawnWrecks(s) {
   s.wrecks = [];
-  const inWorld = (p) => p.x > 100 && p.y > 100 && p.x < WORLD.w - 100 && p.y < WORLD.h - 100;
+  const inWorld = (p) => inArena(p.x, p.y, 100);
   for (let tries = 0; s.wrecks.length < WRECKS_PER_TEAM * 3 && tries < 500; tries++) {
     const r = Math.sqrt(220 ** 2 + rand(s) * (900 ** 2 - 220 ** 2)), a = rand(s) * Math.PI * 2;
     const trio = TEAMS.map((T, k) => ({ x: T.x + Math.cos(FACING[k] + a) * r, y: T.y + Math.sin(FACING[k] + a) * r }));
@@ -775,6 +810,16 @@ export function step(s, inputs, dt = 1 / 60) {
   s.enemies = s.enemies.filter(alive);
   s.shots = s.shots.filter(alive);
   s.wrecks = s.wrecks.filter(alive);
+  for (const p of s.pickups) {
+    p.ttl -= dt;
+    const h = s.heroes.find((o) => o.alive && dist2(o.x, o.y, p.x, p.y) < PICKUP_R * PICKUP_R);
+    if (p.ttl <= 0 || !h) continue;
+    p.ttl = 0;
+    if (p.kind === 'mend') h.hp = Math.min(h.max, h.hp + h.max * POWERUPS.mend.heal);
+    else h[p.kind] = POWERUPS[p.kind].time;
+    addFx(s, 'power', p.x, p.y, 34, h.team);
+  }
+  s.pickups = s.pickups.filter((p) => p.ttl > 0);
   for (const f of s.fx) f.ttl -= dt;
   s.fx = s.fx.filter((f) => f.ttl > 0);
 

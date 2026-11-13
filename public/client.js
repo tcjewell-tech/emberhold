@@ -1,6 +1,6 @@
 // Emberhold browser client: sends this player's input and draws the snapshots the server
 // sends back. No rules live here; canBuild is imported only to colour the build ghost.
-import { WORLD, CELL, TEAMS, HEROES, HERO_IDS, STRUCTS, ENEMIES, EMBER_R, HERO_R, BUILD_RANGE, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, moveHero } from './sim.js';
+import { WORLD, CELL, TEAMS, HEROES, HERO_IDS, STRUCTS, ENEMIES, EMBER_R, HERO_R, BUILD_RANGE, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, moveHero, ARENA, POWERUPS } from './sim.js';
 import { interpolate } from './interp.js';
 import { createTimeline, createPredictor, createUnpacker } from './net.js';
 import { PX, TILE, MOODS, ground, heroSprite, createArt } from './art.js';
@@ -17,10 +17,10 @@ const mini = $('minimap').getContext('2d');
 
 const VIEW = { w: 704, h: 440 }; // the most art pixels any screen shows, so a big monitor is no advantage
 const GUN_SOUND = { anvil: 'Scattergun', dart: 'Pulse rifle', patch: 'Needler', cog: 'Nailgun' };
-const FX_SOUND = { ring: 'Shockwave', dash: 'Dash', heal: 'Mend', down: 'Hero down', scrap: 'Scavenge', ult: 'Ultimate', pop: 'Hit' };
+const FX_SOUND = { ring: 'Shockwave', dash: 'Dash', heal: 'Mend', down: 'Hero down', scrap: 'Scavenge', ult: 'Ultimate', pop: 'Hit', power: 'Power-up' };
 const WHY = {
   down: 'You are down', range: 'Too far away', occupied: 'Occupied', ember: 'Too close to an Ember',
-  rival: 'Too close to a rival Ember', unit: 'Something is standing there', scrap: 'Not enough Scrap',
+  rival: 'Too close to a rival Ember', unit: 'Something is standing there', scrap: 'Not enough Scrap', bounds: 'Out over the water',
 };
 
 let ws, slot = -1, lobby = null, latest = null, humans = [], seq = 0, timeline = createTimeline();
@@ -256,7 +256,8 @@ function hud() {
     width(row, o.hp / o.max);
   });
 
-  $('meHp').textContent = h.out ? 'Out' : h.alive ? `${Math.ceil(h.hp)} / ${h.max}${h.shieldMax ? ` + ${Math.ceil(h.shield)} shield` : ''}` : `Back in ${Math.ceil(h.respawn)}s`;
+  const buffs = ['rush', 'fury'].filter((k) => h[k] > 0).map((k) => ` · ${POWERUPS[k].name} ${Math.ceil(h[k])}s`).join('');
+  $('meHp').textContent = h.out ? 'Out' : h.alive ? `${Math.ceil(h.hp)} / ${h.max}${h.shieldMax ? ` + ${Math.ceil(h.shield)} shield` : ''}${buffs}` : `Back in ${Math.ceil(h.respawn)}s`;
   width($('hp'), h.hp / h.max);
   $('q').classList.toggle('ready', h.alive && h.qCd <= 0);
   $('q').lastChild.textContent = h.qCd > 0 ? `${h.qCd.toFixed(1)}s` : 'Ready';
@@ -286,8 +287,13 @@ function minimap() {
     mini.fillRect(o.x * k - size / 2, o.y * k - size / 2, size, size);
   };
   mini.clearRect(0, 0, 180, 170);
+  mini.strokeStyle = 'rgba(255,255,255,0.25)';
+  mini.beginPath();
+  mini.arc(ARENA.x * k, ARENA.y * k, ARENA.r * k, 0, 7);
+  mini.stroke();
   for (const st of s.structs) dot(st, 2, `${TEAMS[st.team].color}99`);
   for (const w of s.wrecks) dot(w, 2, '#a8744f');
+  for (const p of s.pickups) dot(p, 3, '#ffffff');
   for (const e of s.enemies) dot(e, e.type === 'colossus' ? 4 : 2, '#b79cff');
   s.teams.forEach((T, i) => {
     if (!T.alive) return;
@@ -484,7 +490,7 @@ function follow(dt) {
     if (!me.known) me.place(h);
     else {
       // Walk by the sim's own rule, so rival Walls stop the prediction just as they stop the server.
-      const v = h.stun > 0 ? 0 : HEROES[h.kind].speed * dt;
+      const v = h.stun > 0 ? 0 : HEROES[h.kind].speed * (h.rush > 0 ? POWERUPS.rush.speed : 1) * dt;
       me.team = h.team;
       moveHero(latest, me, mx * v, my * v);
       me.settle(dt);
@@ -589,6 +595,7 @@ function draw(s, now) {
     if (st.type === 'spikes') art.spikes(st, x, y); // flat on the ground: under everything
     else stand(st.y + CELL / 2, () => art[st.type](st, x, y));
   }
+  for (const p of s.pickups) if (inView(p)) stand(p.y, () => art.pickup(p, X(p.x), Y(p.y), now));
   for (const w of s.wrecks) {
     if (!inView(w)) continue;
     stand(w.y, () => art.wreck(X(w.x), Y(w.y)));

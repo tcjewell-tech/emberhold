@@ -2,7 +2,7 @@
 
 Three teams (Amber, Azure, Jade) each guard an Ember. AI enemies attack every Ember each
 night; rival heroes can attack at any time. The last Ember standing wins. Bots play every
-hero nobody picks. Bots on a team with a human never spend Scrap: building is your job.
+hero nobody picks, and bot teammates build a base with your team's Scrap, as you can too.
 
 ## Run
 
@@ -46,6 +46,15 @@ npm start -- --lag=150 --jitter=40
 ```
 
 `--lag` is the round trip in milliseconds; `--jitter` adds up to that many more each way.
+
+## Power-ups
+
+AI enemies sometimes drop a glowing gem that lasts 20 seconds. Any hero can grab one by
+walking over it, rivals included: **Rush** (blue, 10 s of 40% more speed), **Fury** (red,
+10 s of 50% more gun damage) or **Mend** (green, heals half your health). Bigger enemies drop
+them more often; the Colossus always does.
+
+The arena is round, ringed by water.
 
 ## Controls
 
