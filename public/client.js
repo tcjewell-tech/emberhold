@@ -2,7 +2,7 @@
 // sends back. No rules live here; canBuild is imported only to colour the build ghost.
 import { WORLD, CELL, TEAMS, HEROES, HERO_IDS, STRUCTS, ENEMIES, EMBER_R, HERO_R, BUILD_RANGE, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, moveHero } from './sim.js';
 import { interpolate } from './interp.js';
-import { createTimeline, createPredictor } from './net.js';
+import { createTimeline, createPredictor, createUnpacker } from './net.js';
 import { PX, TILE, MOODS, ground, heroSprite, createArt } from './art.js';
 import { createSound } from './sound.js';
 import { createTouch } from './touch.js';
@@ -48,8 +48,8 @@ function connect() {
     $('offline').hidden = false;
     setTimeout(connect, 1500);
   };
-  ws.onmessage = (ev) => {
-    const m = JSON.parse(ev.data);
+  ws.binaryType = 'arraybuffer';
+  const feed = createUnpacker((m) => {
     if (m.t === 'state') {
       latest = m.s;
       humans = m.humans;
@@ -89,7 +89,8 @@ function connect() {
       $('note').textContent =
         m.why === 'taken' ? 'Someone just took that hero. Pick another.' : m.why === 'out' ? 'That team has already fallen. Pick another.' : 'Could not join that slot.';
     }
-  };
+  });
+  ws.onmessage = (ev) => feed(ev.data);
 }
 
 const who = (i) => (i === slot ? 'You' : humans[i] ? 'Player' : 'Bot');

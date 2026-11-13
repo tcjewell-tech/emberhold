@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import net from 'node:net';
 import WS from 'ws';
 import { startServer } from '../server.js';
+import { createUnpacker } from '../public/net.js';
 import { createGame, HEROES } from '../public/sim.js';
 
 const AMBER_DART = 1, AZURE_DART = 5;
@@ -10,13 +11,14 @@ const AMBER_DART = 1, AZURE_DART = 5;
 /** A WebSocket client that remembers what it was sent and can wait for a particular message. */
 async function connect(port) {
   const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+  ws.binaryType = 'arraybuffer';
   const inbox = [];
   let waiting = [];
-  ws.addEventListener('message', (ev) => {
-    const m = JSON.parse(ev.data);
+  const feed = createUnpacker((m) => {
     inbox.push(m);
     waiting = waiting.filter((w) => !(w.pred(m) && (w.resolve(m), true)));
   });
+  ws.addEventListener('message', (ev) => feed(ev.data));
   await new Promise((resolve, reject) => {
     ws.addEventListener('open', resolve);
     ws.addEventListener('error', () => reject(new Error('could not connect')));
@@ -209,14 +211,16 @@ test('"Play again" starts a fresh match, but only once the match is over', async
 
 test('snapshots are compressed on the wire', async (t) => {
   const { port } = await withServer(t);
-  const ws = new WS(`ws://127.0.0.1:${port}`);
+  // Without the WebSocket's own compression, as behind a proxy that strips it: the game must compress by itself.
+  const ws = new WS(`ws://127.0.0.1:${port}`, { perMessageDeflate: false });
   t.after(() => ws.terminate());
   await new Promise((resolve) => ws.on('open', resolve));
   ws.send(JSON.stringify({ t: 'join', slot: AMBER_DART }));
-  let chars = 0, states = 0;
-  await new Promise((resolve) => ws.on('message', (data) => (chars += data.length, ++states >= 60 && resolve())));
+  let chars = 0, states = 0, done;
+  const feed = createUnpacker((m) => (chars += JSON.stringify(m).length, m.t === 'state' && ++states >= 60 && done()));
+  await new Promise((resolve) => ((done = resolve), ws.on('message', (data) => feed(data))));
   const wire = ws._socket.bytesRead;
-  assert.ok(wire < chars / 8, `${states} messages of ${chars} characters took ${wire} bytes`);
+  assert.ok(wire < chars / 8, `${states} states of ${chars} characters took ${wire} bytes`);
 });
 
 test('each snapshot carries the server tick and the last input heard from every player', async (t) => {

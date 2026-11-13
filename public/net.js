@@ -82,3 +82,24 @@ export function createPredictor(snap = 120) {
   };
   return me;
 }
+
+/**
+ * Reads the server's messages. Every message arrives as one stream of raw-deflate data
+ * (newline-separated JSON), compressed by the server itself: some hosts' proxies strip the
+ * WebSocket's own compression, which would send each player about 260 KB/s instead of about 25.
+ * Returns feed(data): pass it each message's ArrayBuffer, in order.
+ */
+export function createUnpacker(onMessage) {
+  const ds = new DecompressionStream('deflate-raw'), writer = ds.writable.getWriter();
+  const reader = ds.readable.pipeThrough(new TextDecoderStream()).getReader();
+  (async () => {
+    let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      buf += value;
+      for (let i; (i = buf.indexOf('\n')) >= 0; buf = buf.slice(i + 1)) onMessage(JSON.parse(buf.slice(0, i)));
+    }
+  })().catch(() => {}); // a broken stream means a dead connection, which reconnects anyway
+  return (data) => writer.write(new Uint8Array(data)).catch(() => {});
+}

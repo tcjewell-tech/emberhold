@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import { networkInterfaces } from 'node:os';
+import { createDeflateRaw, constants } from 'node:zlib';
 import { WebSocketServer } from 'ws';
 import { createGame, step, snapshot, STRUCTS } from './public/sim.js';
 import { botInput } from './public/bots.js';
@@ -65,11 +66,19 @@ export async function startServer({
     }
   });
 
-  // Snapshots are the whole state as JSON. Each one is nearly the same as the last, so the
-  // socket's stream compression takes about 650 KB/s per player down to about 25.
-  const wss = new WebSocketServer({ server: http, maxPayload: 2048, perMessageDeflate: true });
+  // Snapshots are the whole state as JSON. Each one is nearly the same as the last, so one
+  // deflate stream per player takes about 650 KB/s down to about 25. It is done here rather than
+  // by the WebSocket's own compression, which some hosts' proxies strip (Render's does).
+  const wss = new WebSocketServer({ server: http, maxPayload: 2048 });
   const humans = () => Array.from({ length: SLOTS }, (_, i) => seats.has(i));
-  const post = (ws, text) => ws.down(() => ws.readyState === 1 && ws.send(text));
+  const post = (ws, text) => ws.down(() => {
+    if (ws.readyState !== 1) return;
+    ws.z.write(`${text}
+`);
+    ws.z.flush(constants.Z_SYNC_FLUSH, () => {
+      if (ws.readyState === 1 && ws.out.length) ws.send(Buffer.concat(ws.out.splice(0)));
+    });
+  });
   const send = (ws, msg) => post(ws, JSON.stringify(msg));
   const lobby = () => ({ t: 'lobby', humans: humans(), running: game !== null, out: game ? game.teams.map((T) => !T.alive) : [false, false, false] });
   const tellAll = () => wss.clients.forEach((ws) => send(ws, lobby()));
@@ -97,7 +106,8 @@ export async function startServer({
 
   wss.on('connection', (ws) => {
     ws.on('error', () => {}); // e.g. an oversized message; ws then closes the socket and 'close' cleans up
-    Object.assign(ws, { slot: -1, alive: true, msgs: 0, up: slowLine(lag / 2, jitter), down: slowLine(lag / 2, jitter) });
+    Object.assign(ws, { slot: -1, alive: true, msgs: 0, up: slowLine(lag / 2, jitter), down: slowLine(lag / 2, jitter), z: createDeflateRaw(), out: [] });
+    ws.z.on('data', (chunk) => ws.out.push(chunk));
     if (wss.clients.size > maxClients) return ws.close(1013, 'full');
     send(ws, lobby());
     ws.on('pong', () => (ws.alive = true));
@@ -120,6 +130,7 @@ export async function startServer({
       }
     }));
     ws.on('close', () => {
+      ws.z.close();
       if (ws.slot < 0) return;
       seats.delete(ws.slot); // a bot takes the hero over
       ws.slot = -1;
