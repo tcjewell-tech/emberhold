@@ -201,7 +201,7 @@ export async function startServer({
 }
 
 if (import.meta.main) {
-  const lan = process.argv.includes('--lan');
+  const lan = process.argv.includes('--lan') || process.env.RENDER === 'true'; // Render sets RENDER; its proxy needs us on every interface
   const flag = (name) => Number(process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1]) || 0;
   const lag = flag('lag'), jitter = flag('jitter');
   const { port } = await startServer({ port: Number(process.env.PORT) || 3000, host: lan ? '0.0.0.0' : '127.0.0.1', lag, jitter });
