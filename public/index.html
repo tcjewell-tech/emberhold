@@ -59,7 +59,7 @@
   #hp span { display: flex; justify-content: space-between; gap: 14px; margin-bottom: 4px; }
   #meName { color: var(--team); }
   .key { min-width: 134px; display: grid; grid-template-columns: auto 1fr; gap: 0 8px; align-items: center; }
-  .key span { grid-column: 2; color: var(--dim); }
+  .key span { grid-column: 2; color: var(--dim); white-space: nowrap; }
   .key.ready span { color: var(--good); }
   .key.ready { box-shadow: inset 0 0 0 2px var(--good), 4px 4px 0 var(--line); }
 
@@ -121,7 +121,6 @@
   body.touch.autobuild #auto { display: block !important; font: 700 var(--s) var(--pix); color: var(--line); text-shadow: none; background: var(--gold); border: 2px solid var(--line); padding: 16px 14px; }
   body.touch.autobuild #build button[data-type], body.touch.autobuild #rm { display: none; }
   #gear { position: fixed; top: 74px; right: 10px; font: inherit; color: var(--text); text-shadow: var(--hard); background: var(--panel); border: 4px solid var(--line); box-shadow: inset 0 0 0 2px var(--edge), 4px 4px 0 var(--line); padding: 6px 10px; cursor: pointer; }
-  body:not(.touch) #gear { top: auto; bottom: 12px; right: auto; left: 210px; }
   #settings .sheet { gap: 12px; }
   #settings button { font: inherit; color: var(--text); text-shadow: inherit; background: var(--well); border: 2px solid var(--edge); padding: 12px; cursor: pointer; text-align: left; }
   #settings button small { display: block; color: var(--dim); font: 400 var(--s) var(--plain); text-shadow: none; margin-top: 4px; }
@@ -143,8 +142,8 @@
   @media (max-height: 520px) { #hud, .overlay .sheet { zoom: 0.6; } .overlay { place-items: start center; } }
 
   /* narrower windows: lift the build bar, then the minimap, above the centre panel instead of overlapping it */
-  @media (max-width: 1340px) { #build { bottom: 82px; } #hint { bottom: 150px; } }
-  @media (max-width: 1040px) { #minimap { bottom: 82px; } }
+  @media (max-width: 1340px) { #build { bottom: 100px; } #hint { bottom: 174px; } }
+  @media (max-width: 1040px) { #minimap { bottom: 100px; } }
   @media (max-width: 760px) { #teams { grid-template-columns: 1fr; } #squad, #minimap { display: none; } #embers .ember { width: 84px; } }
 </style>
 </head>
