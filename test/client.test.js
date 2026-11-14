@@ -26,3 +26,11 @@ test('the preview configs start the real server', () => {
   const { configurations } = JSON.parse(read('.claude/launch.json'));
   for (const c of configurations) assert.equal(c.runtimeArgs[0], 'server.js', c.name);
 });
+
+test('every structure has a build button and every hero\'s gun has a sound', async () => {
+  const { STRUCTS, HEROES } = await import('../public/sim.js');
+  const { createSound } = await import('../public/sound.js');
+  for (const type of Object.keys(STRUCTS)) assert.ok(page.includes(`data-type="${type}"`), `no build button for ${type}`);
+  const names = createSound().names;
+  for (const h of Object.values(HEROES)) assert.ok(names.includes(h.gun.name), `no sound called ${h.gun.name}`);
+});

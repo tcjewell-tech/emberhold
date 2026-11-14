@@ -6,13 +6,13 @@ import { join, extname } from 'node:path';
 import { networkInterfaces } from 'node:os';
 import { createDeflateRaw, constants } from 'node:zlib';
 import { WebSocketServer } from 'ws';
-import { createGame, step, snapshot, STRUCTS } from './public/sim.js';
+import { createGame, step, snapshot, STRUCTS, TEAMS, TEAM_SIZE, teamOf } from './public/sim.js';
 import { botInput } from './public/bots.js';
 
 const PUBLIC = join(import.meta.dirname, 'public');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
 const TICK = 1 / 60;
-const SLOTS = 12;
+const SLOTS = TEAMS.length * TEAM_SIZE;
 const FLOOD = 1000; // messages one connection may send per heartbeat; a real client sends about 150
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const num = (v) => (Number.isFinite(v) ? v : 0);
@@ -91,7 +91,7 @@ export async function startServer({
     key = typeof key === 'string' ? key.slice(0, 64) : '';
     const old = seats.get(slot);
     if (old && !(key && old.key === key)) return deny('taken');
-    if (game && game.phase !== 'over' && !game.teams[slot >> 2].alive) return deny('out');
+    if (game && game.phase !== 'over' && !game.teams[teamOf(slot)].alive) return deny('out');
     if (old) {
       old.ws.slot = -1; // so its close does not give the seat away
       old.ws.terminate();

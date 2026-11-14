@@ -9,9 +9,10 @@ const gap = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const MID = { x: (TEAMS[0].x + TEAMS[1].x + TEAMS[2].x) / 3, y: (TEAMS[0].y + TEAMS[1].y + TEAMS[2].y) / 3 };
 
 /**
- * The base an all-bot team's Cog builds, in order: Turrets, a Wall ring (the side facing
- * mid-map first), Spikes in its four corner gates, more Turrets. The gates are at the
- * corners, each with a Turret behind it, so no rival base has a straight shot through one.
+ * The base a bot Cog builds, in order: Turrets, two Shield Generators, a Wall ring (the side
+ * facing mid-map first), Spikes in its four corner gates, more Turrets, two more Shield
+ * Generators. The gates are at the corners, each with a Turret behind it, so no rival base
+ * has a straight shot through one. The four generators' fields cover every guard post.
  */
 const BLUEPRINTS = TEAMS.map((T) => {
   const ex = T.x / CELL, ey = T.y / CELL;
@@ -26,9 +27,11 @@ const BLUEPRINTS = TEAMS.map((T) => {
   walls.sort((a, b) => fromMid(a) - fromMid(b));
   return [
     ...[[2, 2], [-3, -3], [-3, 2], [2, -3]].map(at('turret')),
+    ...[[1, 1], [-2, -2]].map(at('shield')),
     ...walls.map(at('wall')),
     ...gates.map(at('spikes')),
     ...[[3, -1], [-4, 0], [0, 3], [-1, -4]].map(at('turret')),
+    ...[[-2, 1], [1, -2]].map(at('shield')),
   ];
 });
 
@@ -140,8 +143,11 @@ export function botInput(s, i, spend = true) {
   const mates = s.heroes.filter((o) => o.team === h.team && o.alive && o !== h);
   const medic = mates.find((o) => o.kind === 'patch');
   const patient = h.kind === 'patch' && !hurt ? mates.filter((o) => o.hp < o.max * 0.6 && gap(h, o) < 500).sort((a, c) => a.hp / a.max - c.hp / c.max)[0] : null;
-  if (patient) {
-    goal = patient; // a medic's first job is to get Mend in reach of whoever needs it most
+  // A Forge defending home goes to the most broken Wall, Turret or Shield Generator near its Ember, to Reforge it.
+  const broken = h.kind === 'forge' && !hurt && defend
+    ? s.structs.filter((st) => st.team === h.team && st.type !== 'spikes' && st.hp < st.max * 0.7 && gap(st, em) < LEASH).sort((a, c) => a.hp / a.max - c.hp / c.max)[0] : null;
+  if (patient || broken) {
+    goal = patient || broken; // a medic's first job is to get Mend in reach of whoever needs it most; a Forge's, Reforge
     stopAt = def.q.r * 0.6;
     fixed = true;
   } else if (hurt && defend && medic) {
@@ -216,6 +222,9 @@ export function botInput(s, i, spend = true) {
     const squad = s.heroes.filter((o) => o.team === h.team && !o.out);
     out.q = squad.some((o) => o.alive && o.hp < o.max * 0.65 && gap(h, o) <= def.q.r);
     out.r = squad.some((o) => !o.alive) || squad.filter((o) => o.hp < o.max * 0.4).length >= 2;
+  } else if (h.kind === 'forge') {
+    out.q = s.structs.some((st) => st.team === h.team && st.type !== 'spikes' && st.hp < st.max * 0.7 && gap(h, st) <= def.q.r);
+    out.r = s.heroes.filter((o) => o.team === h.team && o.alive && o.hp < o.max * 0.5).length >= 2;
   } else {
     out.q = foeD < 400;
     out.r = s.structs.some((st) => st.team === h.team && st.type !== 'spikes' && st.hp < st.max * 0.5);

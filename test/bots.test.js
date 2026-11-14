@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as S from '../public/sim.js';
-import { botInput } from '../public/bots.js';
+import { botInput, nextPiece } from '../public/bots.js';
 
 const DT = 1 / 60;
-const AMBER = 0, AZURE = 4;
-const ANVIL = 0, DART = 1, PATCH = 2;
+const AMBER = 0, AZURE = S.TEAM_SIZE;
+const ANVIL = 0, DART = 1, PATCH = 2, COG = 3, FORGE = 4;
 const MID = { x: 1820, y: 1500 };
 const gap = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const place = (h, x, y) => Object.assign(h, { x, y });
@@ -96,7 +96,7 @@ test('Anvil and Dart bots set out to raid a rival Ember once the first night is 
 
 /** Which rival Ember (team index) a team's Dart bot is walking towards. */
 function raidTarget(g, team) {
-  const anvil = g.heroes[team * 4 + DART], input = botInput(g, anvil.i);
+  const anvil = g.heroes[team * S.TEAM_SIZE + DART], input = botInput(g, anvil.i);
   const toward = (k) => {
     const em = g.teams[k].ember, d = gap(anvil, em);
     return (input.mx * (em.x - anvil.x) + input.my * (em.y - anvil.y)) / d;
@@ -124,7 +124,7 @@ test('a raiding bot in range of a rival Ember shoots at it', () => {
   g.wave = 1;
   g.wrecks = [];
   const az = g.teams[1].ember;
-  g.heroes.slice(AZURE, AZURE + 4).forEach((h) => place(h, 300, 300));
+  g.heroes.slice(AZURE, AZURE + S.TEAM_SIZE).forEach((h) => place(h, 300, 300));
   const dart = place(g.heroes[AMBER + DART], az.x - 400, az.y);
   S.addStruct(g, 'wall', 1, Math.floor(dart.x / S.CELL) + 2, Math.floor(dart.y / S.CELL) + 3); // nearer, but off the line
   const input = botInput(g, dart.i);
@@ -193,7 +193,7 @@ test('a bot finishes off the weakest hostile in range rather than the nearest', 
 test('a raider picks off a rival Turret from outside its reach', () => {
   const g = quiet();
   g.wave = 1;
-  g.heroes.slice(AZURE, AZURE + 4).forEach((h) => place(h, 300, 300));
+  g.heroes.slice(AZURE, AZURE + S.TEAM_SIZE).forEach((h) => place(h, 300, 300));
   const turret = S.addStruct(g, 'turret', 1, 60, 59); // west of Azure's Ember
   const anvil = g.heroes[AMBER + ANVIL];
   assert.ok(S.HEROES.anvil.gun.range > S.STRUCTS.turret.range, 'the Scattergun outranges a Turret');
@@ -280,4 +280,35 @@ test('the Anvil bot raids a step ahead of its Dart, never alone', () => {
   assert.equal(Math.hypot(ahead.mx, ahead.my), 0, 'holds its place in front');
   Object.assign(dart, { alive: false, hp: 0 });
   assert.ok(heading(botInput(g, anvil.i), anvil, em) > 0.9, 'Dart down: heads home');
+});
+
+// ---------------------------------------------------------------- Shield Generators and the Forge bot
+
+test('the bot base adds Shield Generators after its first Turrets, and their fields cover every guard post', () => {
+  const g = quiet(), cog = g.heroes[AMBER + COG], types = [];
+  g.teams[0].scrap = 1e6;
+  for (let p; (p = nextPiece(g, cog)) && types.length < 300;) {
+    types.push(p.type);
+    S.addStruct(g, p.type, 0, p.cx, p.cy).wait = 0;
+  }
+  assert.deepEqual(types.slice(0, 6), ['turret', 'turret', 'turret', 'turret', 'shield', 'shield']);
+  const gens = g.structs.filter((st) => st.type === 'shield');
+  assert.equal(gens.length, 4);
+  for (let k = 0; k < S.TEAM_SIZE; k++) assert.ok(gens.some((st) => gap(st, S.post(0, k)) <= S.STRUCTS.shield.radius), `post ${k} is in a field`);
+});
+
+test('the Forge bot goes to a broken structure at its base and Reforges it, and calls Aegis when teammates are badly hurt', () => {
+  const g = quiet();
+  g.phase = 'night';
+  const em = g.teams[0].ember, forge = place(g.heroes[AMBER + FORGE], em.x - 100, em.y - 200);
+  const wall = S.addStruct(g, 'wall', 0, em.x / S.CELL - 5, em.y / S.CELL); // west of the Ember; the Forge's guard post is east
+  assert.ok(heading(botInput(g, forge.i), forge, wall) < 0.9, 'not while everything is whole');
+  wall.hp = wall.max * 0.5;
+  let input = botInput(g, forge.i);
+  assert.ok(heading(input, forge, wall) > 0.9 && !input.q, 'out of reach: walks to it');
+  place(forge, wall.x + 60, wall.y);
+  input = botInput(g, forge.i);
+  assert.ok(input.q && !input.r);
+  for (const k of [ANVIL, DART]) g.heroes[AMBER + k].hp *= 0.4;
+  assert.ok(botInput(g, forge.i).r);
 });

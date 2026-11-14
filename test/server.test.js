@@ -4,9 +4,9 @@ import net from 'node:net';
 import WS from 'ws';
 import { startServer } from '../server.js';
 import { createUnpacker } from '../public/net.js';
-import { createGame, HEROES } from '../public/sim.js';
+import { createGame, HEROES, TEAM_SIZE } from '../public/sim.js';
 
-const AMBER_DART = 1, AZURE_DART = 5;
+const AMBER_DART = 1, AZURE_DART = TEAM_SIZE + 1;
 
 /** A WebSocket client that remembers what it was sent and can wait for a particular message. */
 async function connect(port) {
@@ -76,7 +76,7 @@ test('a newcomer sees an empty lobby and no match running', async (t) => {
   const { port } = await withServer(t);
   const c = await connect(port);
   const lobby = await c.first(isLobby, 'the lobby');
-  assert.deepEqual(lobby.humans, Array(12).fill(false));
+  assert.deepEqual(lobby.humans, Array(15).fill(false));
   assert.equal(lobby.running, false);
   await c.close();
 });
@@ -226,7 +226,7 @@ test('each snapshot carries the server tick and the last input heard from every 
   const a = await connect(port);
   a.send({ t: 'join', slot: AMBER_DART });
   const first = await a.next(isState, 'a state');
-  assert.equal(first.acks.length, 12);
+  assert.equal(first.acks.length, 15);
   assert.equal(first.acks[AMBER_DART], 0, 'nothing heard yet');
   a.send({ t: 'input', mx: 0, my: 0, seq: 41 });
   a.send({ t: 'input', mx: 0, my: 0, seq: 'x' }); // not a number: ignored

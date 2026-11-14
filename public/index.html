@@ -159,6 +159,7 @@
     <button data-type="wall"><kbd>1</kbd> Wall<i class="num"></i></button>
     <button data-type="turret"><kbd>2</kbd> Turret<i class="num"></i></button>
     <button data-type="spikes"><kbd>3</kbd> Spikes<i class="num"></i></button>
+    <button data-type="shield"><kbd>4</kbd> Shield<i class="num"></i></button>
     <button id="rm" class="touchonly">Remove</button>
     <button id="auto" class="touchonly">Auto-build</button>
   </div>
@@ -175,17 +176,17 @@
   <div class="sheet">
     <h1>Emberhold</h1>
     <h2>Choose your team and hero</h2>
-    <p id="tip">Three teams each guard an Ember. AI enemies attack every night; rival heroes can attack any time. The last Ember standing wins. Bots play every hero nobody picks, but bots on your team never spend Scrap: building is your job.</p>
+    <p id="tip">Three teams each guard an Ember. AI enemies attack every night; rival heroes can attack any time. The last Ember standing wins. Bots play every hero nobody picks, and a bot teammate builds from your team's shared Scrap too.</p>
     <div id="teams"></div>
     <p id="note"></p>
-    <p id="touchtip" class="touchonly">Drag anywhere to move. Your hero aims, fires and scavenges wrecks by itself. Tap Q and R for your ability and ultimate. To build, tap Wall, Turret or Spikes, then tap the ground.</p>
+    <p id="touchtip" class="touchonly">Drag anywhere to move. Your hero aims, fires and scavenges wrecks by itself. Tap Q and R for your ability and ultimate. To build, drag Wall, Turret, Spikes or Shield onto the ground.</p>
     <div id="controls">
       <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</span>
       <span><kbd>Mouse</kbd> aim, left-click fire</span>
       <span><kbd>Q</kbd> ability</span>
       <span><kbd>R</kbd> ultimate</span>
       <span>hold <kbd>F</kbd> scavenge a wreck</span>
-      <span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> build: left-click places, right-click removes, <kbd>Esc</kbd> stops</span>
+      <span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> build: left-click places, right-click removes, <kbd>Esc</kbd> stops</span>
       <span>hold <kbd>Tab</kbd> scoreboard</span>
       <span><kbd>M</kbd> sound on or off</span>
     </div>
@@ -207,7 +208,7 @@
     <h2>Settings</h2>
     <p>Build style on touch screens</p>
     <div class="choices">
-      <button data-build="drag">Drag to place<small>Drag Wall, Turret or Spikes onto the ground</small></button>
+      <button data-build="drag">Drag to place<small>Drag Wall, Turret, Spikes or Shield onto the ground</small></button>
       <button data-build="auto">Auto-build<small>One button builds the next piece of a ready-made base</small></button>
     </div>
     <button id="soundSet"></button>

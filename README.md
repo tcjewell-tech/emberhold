@@ -21,7 +21,7 @@ itself, choosing targets the way the bots do, so your thumbs are free to move an
 Q and R for your ability and ultimate. A faint ring shows how far your gun reaches.
 
 Settings offers two ways to build on a touch screen:
-- **Drag to place:** drag Wall, Turret or Spikes onto the ground and let go (Remove switches
+- **Drag to place:** drag Wall, Turret, Spikes or Shield onto the ground and let go (Remove switches
   to removing).
 - **Auto-build:** one button builds the next piece of a ready-made base around your Ember.
 
@@ -65,7 +65,7 @@ The arena is round, ringed by water.
 | Q | Ability |
 | R | Ultimate (when charged) |
 | F (hold) | Scavenge a wreck for Scrap |
-| 1 2 3 | Build Wall / Turret / Spikes: left-click places (drag to paint), right-click removes, Esc stops |
+| 1 2 3 4 | Build Wall / Turret / Spikes / Shield Generator: left-click places (drag to paint), right-click removes, Esc stops |
 | Tab (hold) | Scoreboard |
 | M | Sound on or off |
 

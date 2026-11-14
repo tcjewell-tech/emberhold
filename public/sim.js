@@ -55,7 +55,10 @@ const WALL_COST = 30; // flow-field price of chewing through a blocking structur
 const ULT_PER_DMG = 0.25;
 const ULT_PER_HEAL = 0.4;
 
-export const HERO_IDS = ['anvil', 'dart', 'patch', 'cog'];
+export const HERO_IDS = ['anvil', 'dart', 'patch', 'cog', 'forge'];
+export const TEAM_SIZE = HERO_IDS.length;
+/** A hero's slot is team * TEAM_SIZE + its place in HERO_IDS. */
+export const teamOf = (slot) => Math.floor(slot / TEAM_SIZE);
 export const HEROES = {
   anvil: {
     name: 'Anvil', role: 'Vanguard', hp: 300, speed: 165, passive: 'Shield: soaks 100 damage, refills after 4 s unhurt',
@@ -82,12 +85,21 @@ export const HEROES = {
     q: { name: 'Sentry', cd: 14, ttl: 20, hp: 100, text: 'Drop a free Turret for 20 s' },
     r: { name: 'Overclock', time: 8, mult: 2, text: 'Repair your structures; Turrets fire 2x for 8 s' },
   },
+  forge: {
+    name: 'Forge', role: 'Support', hp: 120, speed: 150, passive: 'Shield field: Forge and teammates beside it carry a 50-point barrier',
+    gun: { name: 'Rivet gun', dmg: 15, pellets: 1, spread: 0.02, rate: 1.6, range: 170, speed: 700 },
+    q: { name: 'Reforge', cd: 8, r: 170, repair: 100, text: 'Repair your Walls, Turrets and Shield Generators around you' },
+    r: { name: 'Aegis', time: 6, taken: 0.5, text: '6 s: your whole team takes half damage' },
+  },
 };
 
 export const STRUCTS = {
   wall: { name: 'Wall', cost: 10, hp: 300, blocks: true },
   turret: { name: 'Turret', cost: 40, hp: 150, blocks: true, range: 280, dmg: 12, rate: 3 },
   spikes: { name: 'Spikes', cost: 15, hp: 400, blocks: false, dps: 30 }, // hp is wear: damage it can still deal
+  // Friendly heroes within radius carry a barrier of absorb points, which refills after delay s unhurt.
+  // buildTime: seconds after placing before it works. size: how wide it is drawn; it still fills its cell.
+  shield: { name: 'Shield Generator', cost: 35, hp: 120, blocks: true, buildTime: 2, size: 28, radius: 90, absorb: 50, delay: 4, rate: 25 },
 };
 
 export const ENEMIES = {
@@ -118,7 +130,7 @@ function rand(s) {
 
 /** Where hero number k of a team stands guard, and respawns. */
 export function post(team, k) {
-  const a = Math.PI / 4 + (k * Math.PI) / 2;
+  const a = Math.PI / 4 + (k * 2 * Math.PI) / TEAM_SIZE;
   return { x: TEAMS[team].x + Math.cos(a) * 110, y: TEAMS[team].y + Math.sin(a) * 110 };
 }
 
@@ -126,14 +138,14 @@ export function createGame(seed = 1) {
   const s = {
     // mood: which of the three colour moods the match wears. s.seed cannot say: it moves on with every random number.
     t: 0, seed: seed | 0, mood: Math.abs(seed | 0) % 3, phase: 'day', wave: 0, timer: DAY_LENGTH, winner: null, nextId: 1, sv: 0,
-    teams: TEAMS.map((T) => ({ scrap: START_SCRAP, alive: true, overclock: 0, ember: { x: T.x, y: T.y, hp: EMBER_HP, max: EMBER_HP } })),
+    teams: TEAMS.map((T) => ({ scrap: START_SCRAP, alive: true, overclock: 0, aegis: 0, ember: { x: T.x, y: T.y, hp: EMBER_HP, max: EMBER_HP } })),
     heroes: [], enemies: [], shots: [], structs: [], wrecks: [], pickups: [], fx: [], spawn: [],
   };
   for (let team = 0; team < TEAMS.length; team++) {
     HERO_IDS.forEach((kind, k) => {
       const hp = HEROES[kind].hp, shield = HEROES[kind].shield?.max ?? 0;
       s.heroes.push({
-        i: team * 4 + k, team, kind, ...post(team, k), aim: 0, hp, max: hp, alive: true, out: false, respawn: 0,
+        i: team * TEAM_SIZE + k, team, kind, ...post(team, k), aim: 0, hp, max: hp, alive: true, out: false, respawn: 0,
         shield, shieldMax: shield, shieldCd: 0, fireCd: 0, qCd: 0, ult: 0, fortify: 0, overdrive: 0, rush: 0, fury: 0, stun: 0, scav: 0, scavId: 0,
         stats: { dmg: 0, heal: 0, scrap: 0, kills: 0, pvp: 0, deaths: 0 },
       });
@@ -157,7 +169,7 @@ const caches = new WeakMap();
 function cache(s) {
   let c = caches.get(s);
   if (!c || c.sv !== s.sv) {
-    c = { sv: s.sv, cells: new Map(), wall: new Uint8Array(COLS * ROWS), flows: [null, null, null] };
+    c = { sv: s.sv, cells: new Map(), wall: new Uint8Array(COLS * ROWS), flows: [null, null, null], shields: s.structs.filter((st) => st.type === 'shield') };
     for (const st of s.structs) {
       c.cells.set(st.cy * COLS + st.cx, st);
       if (STRUCTS[st.type].blocks) c.wall[st.cy * COLS + st.cx] = 1;
@@ -172,7 +184,7 @@ const blocks = (st) => st !== undefined && STRUCTS[st.type].blocks;
 
 export function addStruct(s, type, team, cx, cy, ttl = 0) {
   const hp = STRUCTS[type].hp;
-  const st = { id: s.nextId++, type, team, cx, cy, x: cx * CELL + CELL / 2, y: cy * CELL + CELL / 2, hp, max: hp, cd: 0, aim: 0, ttl };
+  const st = { id: s.nextId++, type, team, cx, cy, x: cx * CELL + CELL / 2, y: cy * CELL + CELL / 2, hp, max: hp, cd: 0, aim: 0, ttl, wait: STRUCTS[type].buildTime ?? 0 };
   s.structs.push(st);
   s.sv++;
   return st;
@@ -308,8 +320,9 @@ function hurtEnemy(s, e, dmg, team, owner) {
 function hurtHero(s, h, dmg, team, owner) {
   if (!h.alive) return;
   if (h.fortify > 0) dmg *= HEROES.anvil.r.taken;
+  if (s.teams[h.team].aegis > 0) dmg *= HEROES.forge.r.taken;
   credit(s, owner, Math.min(dmg, h.hp + h.shield));
-  if (h.shieldMax) h.shieldCd = HEROES[h.kind].shield.delay; // any hit, absorbed or not, restarts the wait
+  if (h.shieldMax) h.shieldCd = shieldOf(h).delay; // any hit, absorbed or not, restarts the wait
   const soaked = Math.min(h.shield, dmg);
   h.shield -= soaked;
   h.hp -= dmg - soaked;
@@ -336,6 +349,15 @@ function hurtEmber(s, k, dmg, team, owner) {
   if (T.ember.hp > 0) return;
   T.ember.hp = 0; // the team is eliminated at the end of this step
   if (team >= 0) s.teams[team].scrap += EMBER_BOUNTY;
+}
+
+/** The rule a hero's barrier refills by: its own (Anvil), else the Shield Generator's. */
+const shieldOf = (h) => HEROES[h.kind].shield ?? STRUCTS.shield;
+
+/** Is this hero inside a shield field: a working Shield Generator of its team, or a living Forge teammate (itself included)? */
+function shielded(s, h) {
+  const r2 = STRUCTS.shield.radius ** 2, near = (o) => o.team === h.team && dist2(h.x, h.y, o.x, o.y) <= r2;
+  return cache(s).shields.some((st) => st.wait <= 0 && near(st)) || s.heroes.some((o) => o.kind === 'forge' && o.alive && near(o));
 }
 
 function heal(src, o, amount, charges) {
@@ -452,6 +474,17 @@ function ability(s, h, mx, my) {
   } else if (h.kind === 'patch') {
     for (const o of s.heroes) if (o.alive && o.team === h.team && dist2(h.x, h.y, o.x, o.y) <= q.r * q.r) heal(h, o, q.heal, true);
     addFx(s, 'heal', h.x, h.y, q.r, h.team);
+  } else if (h.kind === 'forge') {
+    let fixed = 0;
+    for (const st of s.structs) {
+      if (st.team !== h.team || st.type === 'spikes' || dist2(h.x, h.y, st.x, st.y) > q.r * q.r) continue;
+      const a = Math.min(q.repair, st.max - st.hp);
+      st.hp += a;
+      fixed += a;
+    }
+    if (!fixed) return false;
+    h.ult = Math.min(100, h.ult + fixed * ULT_PER_HEAL);
+    addFx(s, 'fix', h.x, h.y, q.r, h.team);
   } else {
     const cx = cellOf(h.x), cy = cellOf(h.y);
     const spot = [[0, 0], ...DIRS].find(([dx, dy]) => {
@@ -483,7 +516,8 @@ function ultimate(s, h) {
       if (!o.alive) revive(o, false);
       heal(h, o, o.max, false); // no charge from its own healing, or it would refill itself
     }
-  } else {
+  } else if (h.kind === 'forge') s.teams[h.team].aegis = r.time;
+  else {
     for (const st of s.structs) if (st.team === h.team && st.type !== 'spikes') st.hp = st.max;
     s.teams[h.team].overclock = r.time;
   }
@@ -505,7 +539,8 @@ function updateHero(s, h, raw, dt) {
   h.rush = Math.max(0, h.rush - dt);
   h.fury = Math.max(0, h.fury - dt);
   h.shieldCd = Math.max(0, h.shieldCd - dt);
-  if (h.shieldCd === 0 && h.shield < h.shieldMax) h.shield = Math.min(h.shieldMax, h.shield + HEROES[h.kind].shield.rate * dt);
+  h.shieldMax = (def.shield?.max ?? 0) + (shielded(s, h) ? STRUCTS.shield.absorb : 0); // the barrier is lost on leaving the field
+  h.shield = Math.min(h.shieldMax, h.shield + (h.shieldCd === 0 ? shieldOf(h).rate * dt : 0));
   if (h.stun > 0) {
     h.stun = Math.max(0, h.stun - dt);
     h.scav = 0;
@@ -560,14 +595,18 @@ function updateHero(s, h, raw, dt) {
 // ---------------------------------------------------------------- structures
 
 function updateStructs(s, dt) {
-  for (const T of s.teams) T.overclock = Math.max(0, T.overclock - dt);
+  for (const T of s.teams) {
+    T.overclock = Math.max(0, T.overclock - dt);
+    T.aegis = Math.max(0, T.aegis - dt);
+  }
   for (const st of [...s.structs]) {
     if (st.dead) continue;
     if (st.ttl > 0 && (st.ttl -= dt) <= 0) {
       removeStruct(s, st);
       continue;
     }
-    if (st.type !== 'turret') continue;
+    if (st.wait > 0) st.wait = Math.max(0, st.wait - dt); // still being built: does nothing yet
+    if (st.type !== 'turret' || st.wait > 0) continue;
     const def = STRUCTS.turret;
     st.cd -= dt * (s.teams[st.team].overclock > 0 ? HEROES.cog.r.mult : 1);
     if (st.cd > 0) continue;

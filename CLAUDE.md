@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Emberhold: a top-down browser game. Three teams (Amber, Azure, Jade) of four heroes (Anvil, Dart, Patch, Cog) each guard an Ember. AI enemies attack every Ember each night; rival heroes can attack at any time; the last Ember standing wins. Bots play every hero no human picks. `README.md` has the player-facing rules and controls.
+Emberhold: a top-down browser game. Three teams (Amber, Azure, Jade) of five heroes (Anvil, Dart, Patch, Cog, Forge) each guard an Ember. AI enemies attack every Ember each night; rival heroes can attack at any time; the last Ember standing wins. Bots play every hero no human picks. `README.md` has the player-facing rules and controls.
 
 ## Commands
 
@@ -33,7 +33,7 @@ One code path: the server is always authoritative, solo play included.
 ### Things that span files
 
 - **Inputs.** Humans and bots both produce `{mx, my, aim, fire, use, q, r, build, remove}`. `step` takes an array (or object) indexed by hero slot. Held fields are state; `q`, `r`, `build`, `remove` are one-shot. The server rebuilds every client input from scratch in `readInput` before the sim sees it.
-- **Hero slots.** A hero's index is `team * 4 + k`, where `k` is its position in `HERO_IDS` (`anvil, dart, patch, cog`). Tests, the server's seats and the client all rely on this.
+- **Hero slots.** A hero's index is `team * TEAM_SIZE + k`, where `k` is its position in `HERO_IDS` (`anvil, dart, patch, cog, forge`); `teamOf(slot)` gives the team. A Shield Generator's field (and a Forge's own) raises a nearby hero's `shieldMax` each tick. Tests, the server's seats and the client all rely on this.
 - **State is plain JSON.** The snapshot is `JSON.stringify(state)`, so nothing non-serialisable may go in it. Derived data (cell lookup, wall grid, one flow field per Ember) lives in a `WeakMap` in `sim.js` keyed by the state and rebuilt when `s.sv` changes. Anything that adds or removes a structure must bump `s.sv`; use `addStruct` and the existing removal path rather than touching `s.structs` directly.
 - **Determinism.** The sim uses its own seeded RNG; the same seed and inputs must give the same state (a test checks it). Do not use `Math.random` or the clock in `sim.js` or `bots.js`.
 - **Hostility.** Every hero, shot and structure carries a `team`; AI enemies are hostile to all three. There is no friendly fire within a team, and a team walks and shoots through its own Walls.

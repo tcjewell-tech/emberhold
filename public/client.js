@@ -1,6 +1,6 @@
 // Emberhold browser client: sends this player's input and draws the snapshots the server
 // sends back. No rules live here; canBuild is imported only to colour the build ghost.
-import { WORLD, CELL, TEAMS, HEROES, HERO_IDS, STRUCTS, ENEMIES, EMBER_R, HERO_R, BUILD_RANGE, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, moveHero, ARENA, POWERUPS } from './sim.js';
+import { WORLD, CELL, TEAMS, HEROES, HERO_IDS, STRUCTS, ENEMIES, EMBER_R, HERO_R, BUILD_RANGE, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, moveHero, ARENA, POWERUPS, TEAM_SIZE, teamOf } from './sim.js';
 import { interpolate } from './interp.js';
 import { createTimeline, createPredictor, createUnpacker } from './net.js';
 import { PX, TILE, MOODS, ground, heroSprite, createArt } from './art.js';
@@ -16,8 +16,7 @@ const shadeCanvas = document.createElement('canvas'), shade = shadeCanvas.getCon
 const mini = $('minimap').getContext('2d');
 
 const VIEW = { w: 704, h: 440 }; // the most art pixels any screen shows, so a big monitor is no advantage
-const GUN_SOUND = { anvil: 'Scattergun', dart: 'Pulse rifle', patch: 'Needler', cog: 'Nailgun' };
-const FX_SOUND = { ring: 'Shockwave', dash: 'Dash', heal: 'Mend', down: 'Hero down', scrap: 'Scavenge', ult: 'Ultimate', pop: 'Hit', power: 'Power-up' };
+const FX_SOUND = { ring: 'Shockwave', dash: 'Dash', heal: 'Mend', down: 'Hero down', scrap: 'Scavenge', ult: 'Ultimate', pop: 'Hit', power: 'Power-up', fix: 'Build' };
 const WHY = {
   down: 'You are down', range: 'Too far away', occupied: 'Occupied', ember: 'Too close to an Ember',
   rival: 'Too close to a rival Ember', unit: 'Something is standing there', scrap: 'Not enough Scrap', bounds: 'Out over the water',
@@ -104,7 +103,7 @@ function renderSelect() {
       col.style.setProperty('--team', T.color);
       col.append(el('h3', '', `Team ${T.name}`));
       HERO_IDS.forEach((kind, k) => {
-        const i = team * 4 + k, d = HEROES[kind], fallen = lobby.out[team];
+        const i = team * TEAM_SIZE + k, d = HEROES[kind], fallen = lobby.out[team];
         const card = el('button', 'card');
         card.disabled = fallen || lobby.humans[i];
         const head = el('header');
@@ -124,7 +123,7 @@ function renderSelect() {
 }
 
 function setupHud() {
-  const team = slot >> 2, d = HEROES[HERO_IDS[slot & 3]];
+  const team = teamOf(slot), d = HEROES[HERO_IDS[slot % TEAM_SIZE]];
   $('embers').replaceChildren(
     ...TEAMS.map((T, k) => {
       const box = el('div', 'ember'), top = el('span'), bar = el('div', 'bar');
@@ -160,7 +159,7 @@ function scoreTable(s) {
     cell.colSpan = 8;
     title.append(cell);
     body.append(title);
-    for (const h of s.heroes.slice(k * 4, k * 4 + 4)) {
+    for (const h of s.heroes.filter((o) => o.team === k)) {
       const row = el('tr', h.i === slot ? 'you' : ''), st = h.stats;
       for (const v of [HEROES[h.kind].name, who(h.i), Math.round(st.dmg), Math.round(st.heal), st.scrap, st.kills, st.pvp, st.deaths]) row.append(el('td', 'num', String(v)));
       body.append(row);
@@ -175,12 +174,12 @@ function scoreTable(s) {
 /** Play what changed since the last snapshot: new shots and effects near the camera, the turn of day, our Ember being hit. */
 function hear(s) {
   const near = (o) => clamp(1 - Math.hypot(o.x - cam.x, o.y - cam.y) / 900, 0, 1);
-  const team = slot >> 2, mine = slot >= 0 ? s.teams[team] : null;
+  const team = teamOf(slot), mine = slot >= 0 ? s.teams[team] : null;
   if (heard.id && mine) { // not on the first snapshot, when everything is new
     const guns = new Map();
     for (const sh of s.shots) {
       if (sh.id <= heard.id) continue;
-      const name = sh.owner >= 0 ? GUN_SOUND[s.heroes[sh.owner].kind] : sh.team < 0 ? 'Spit' : 'Turret', k = name + sh.owner;
+      const name = sh.owner >= 0 ? HEROES[s.heroes[sh.owner].kind].gun.name : sh.team < 0 ? 'Spit' : 'Turret', k = name + sh.owner;
       guns.set(k, [name, Math.max(guns.get(k)?.[1] ?? 0, near(sh) * (sh.owner === slot ? 1 : 0.6))]); // one sound per shooter, not per pellet
     }
     [...guns.values()].sort((a, b) => b[1] - a[1]).slice(0, 4).forEach(([name, vol]) => sound.play(name, vol));
@@ -215,7 +214,7 @@ function say(text) {
 /** React to changes between snapshots: phase banners, fallen teams, the end screen. */
 function onState(s) {
   if (slot < 0) return;
-  const team = slot >> 2;
+  const team = teamOf(slot);
   if (s.phase !== seen.phase || s.wave !== seen.wave) {
     if (s.phase === 'night') say(`Night ${s.wave}: defend your Ember`);
     else if (s.phase === 'day') say(`Day ${s.wave + 1}: scavenge, build, raid`);
@@ -249,7 +248,7 @@ function hud() {
     width(box, E.ember.hp / E.ember.max);
   });
   [...$('squad').children].forEach((row, k) => {
-    const o = s.heroes[h.team * 4 + k];
+    const o = s.heroes[h.team * TEAM_SIZE + k];
     row.classList.toggle('down', !o.alive);
     row.firstChild.lastChild.textContent = who(o.i).toLowerCase();
     row.children[1].textContent = o.out ? 'out' : o.alive ? `ult ${Math.floor(o.ult)}%` : `back in ${Math.ceil(o.respawn)}s`;
@@ -365,9 +364,9 @@ addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (e.code === 'KeyM') say(sound.toggle() ? 'Sound off' : 'Sound on'), showSettings();
   if (e.code === 'Escape') setBuild(null);
-  else if (/^Digit[123]$/.test(e.code)) {
-    const type = ['wall', 'turret', 'spikes'][e.code.at(-1) - 1];
-    setBuild(buildType === type ? null : type);
+  else if (/^Digit[1-9]$/.test(e.code)) {
+    const type = Object.keys(STRUCTS)[e.code.at(-1) - 1]; // 1 Wall, 2 Turret, 3 Spikes, 4 Shield: the build bar's order
+    if (type) setBuild(buildType === type ? null : type);
   }
   sendInput({ q: e.code === 'KeyQ', r: e.code === 'KeyR' }); // changes go out at once, not on the next 33 ms beat
 });
@@ -553,7 +552,7 @@ function nightfall(s, X, Y) {
   };
   for (const T of s.teams) if (T.alive) light(X(T.ember.x), Y(T.ember.y) - 6, 230);
   for (const h of s.heroes) if (h.alive) h.i === slot && me.known ? light(X(me.x), Y(me.y) - 6, 150) : light(X(h.x), Y(h.y) - 6, 95);
-  for (const st of s.structs) if (st.type === 'turret') light(X(st.x), Y(st.y), 65);
+  for (const st of s.structs) if (st.type === 'turret' || st.type === 'shield') light(X(st.x), Y(st.y), 65);
   for (const sh of s.shots) light(X(sh.x), Y(sh.y), 16);
   ctx.drawImage(shadeCanvas, 0, 0);
 }
@@ -570,7 +569,8 @@ function drawGhost(X, Y) {
   ctx.globalAlpha = 1;
   art.S.R(x, y, TILE, 1, col); art.S.R(x, y + TILE - 1, TILE, 1, col); art.S.R(x, y, 1, TILE, col); art.S.R(x + TILE - 1, y, 1, TILE, col);
   art.ring(X(me.x), Y(me.y), BUILD_RANGE * PX, 'rgba(255,255,255,0.4)', { gap: 5 });
-  if (STRUCTS[buildType].range) art.ring(x + TILE / 2, y + TILE / 2, STRUCTS[buildType].range * PX, 'rgba(125,255,168,0.6)', { gap: 3 });
+  const reach = STRUCTS[buildType].range ?? STRUCTS[buildType].radius; // a Turret's gun, a Shield Generator's field
+  if (reach) art.ring(x + TILE / 2, y + TILE / 2, reach * PX, 'rgba(125,255,168,0.6)', { gap: 3 });
 }
 
 function draw(s, now) {
@@ -594,6 +594,7 @@ function draw(s, now) {
     const x = X(st.cx * CELL), y = Y(st.cy * CELL);
     if (st.type === 'spikes') art.spikes(st, x, y); // flat on the ground: under everything
     else stand(st.y + CELL / 2, () => art[st.type](st, x, y));
+    if (st.type === 'shield' && !(st.wait > 0)) art.field(st, x, y, now); // flat too, so it never tints whoever stands behind it
   }
   for (const p of s.pickups) if (inView(p)) stand(p.y, () => art.pickup(p, X(p.x), Y(p.y), now));
   for (const w of s.wrecks) {
@@ -610,7 +611,7 @@ function draw(s, now) {
     // A hero is mid-stride for a moment after it last moved.
     const was = strides.get(h.i);
     if (!was || Math.hypot(p.x - was.x, p.y - was.y) > 0.4) strides.set(h.i, { x: p.x, y: p.y, until: was ? now + 140 : 0 });
-    if (inView(p)) stand(p.y, () => art.hero(h, X(p.x), Y(p.y) + 7, mine ? me.aim : h.aim, { walking: now < strides.get(h.i).until, mine, t: now }));
+    if (inView(p)) stand(p.y, () => art.hero(h, X(p.x), Y(p.y) + 7, mine ? me.aim : h.aim, { walking: now < strides.get(h.i).until, mine, t: now, aegis: s.teams[h.team].aegis > 0 }));
   }
   standing.sort((a, b) => a[0] - b[0]).forEach(([, paint]) => paint());
 

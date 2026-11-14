@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import * as S from '../public/sim.js';
 
 const DT = 1 / 60;
-const AMBER = 0, AZURE = 4, JADE = 8; // first hero slot of each team
-const ANVIL = 0, DART = 1, PATCH = 2, COG = 3; // offset within a team
+const AMBER = 0, AZURE = S.TEAM_SIZE, JADE = 2 * S.TEAM_SIZE; // first hero slot of each team
+const ANVIL = 0, DART = 1, PATCH = 2, COG = 3, FORGE = 4; // offset within a team
 const MID = { x: 1820, y: 1500, cx: 45, cy: 37 }; // centre of a cell on open ground, far from every Ember
 
 /** A match with the clock frozen in daytime and no wrecks, so only what a test adds matters. */
@@ -22,7 +22,7 @@ function run(g, seconds, inputs = {}) {
 
 const place = (h, x, y) => Object.assign(h, { x, y });
 const gap = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-const strandAmber = (g) => g.heroes.slice(AMBER, AMBER + 4).forEach((h) => place(h, 300, 300));
+const strandAmber = (g) => g.heroes.slice(AMBER, AMBER + S.TEAM_SIZE).forEach((h) => place(h, 300, 300));
 
 /** Amber's Ember boxed in by its own Walls, optionally with a two-cell gap on the north side. */
 function ringAroundAmber(g, leaveGap) {
@@ -38,11 +38,11 @@ function ringAroundAmber(g, leaveGap) {
 
 // ---------------------------------------------------------------- setup and movement
 
-test('a new match has three teams of four heroes camped at their own Ember', () => {
+test('a new match has three teams of five heroes camped at their own Ember', () => {
   const g = S.createGame(1);
   assert.equal(g.phase, 'day');
   assert.equal(g.teams.length, 3);
-  assert.equal(g.heroes.length, 12);
+  assert.equal(g.heroes.length, 15);
   for (const h of g.heroes) {
     assert.ok(gap(h, g.teams[h.team].ember) < 150);
     assert.equal(h.hp, S.HEROES[h.kind].hp);
@@ -207,14 +207,14 @@ test('an Ember shrugs off most hero fire', () => {
 test('destroying a rival Ember pays out and eliminates that team', () => {
   const g = arena();
   const az = g.teams[1];
-  place(g.heroes[AMBER + DART], az.ember.x - 200, az.ember.y);
+  place(g.heroes[AMBER + DART], az.ember.x, az.ember.y + 200); // from the south: no Azure hero stands in that line of fire
   S.addStruct(g, 'wall', 1, 60, 50);
   az.ember.hp = 20;
   const before = g.teams[0].scrap;
-  run(g, 2, { [AMBER + DART]: { aim: 0, fire: true } });
+  run(g, 2, { [AMBER + DART]: { aim: -Math.PI / 2, fire: true } });
   assert.equal(az.alive, false);
   assert.equal(g.teams[0].scrap, before + S.EMBER_BOUNTY);
-  assert.ok(g.heroes.slice(AZURE, AZURE + 4).every((h) => h.out && !h.alive));
+  assert.ok(g.heroes.slice(AZURE, AZURE + S.TEAM_SIZE).every((h) => h.out && !h.alive));
   assert.equal(g.structs.filter((st) => st.team === 1).length, 0);
   assert.equal(g.phase, 'day');
   assert.equal(g.winner, null);
@@ -638,7 +638,7 @@ test('a snapshot is JSON for the client, with a count in place of the spawn queu
   g.timer = 0.01;
   run(g, 0.1);
   const snap = JSON.parse(S.snapshot(g));
-  assert.equal(snap.heroes.length, 12);
+  assert.equal(snap.heroes.length, 15);
   assert.equal(snap.spawn, undefined);
   assert.equal(snap.pending, g.spawn.length);
   assert.ok(snap.pending > 0);
@@ -697,4 +697,73 @@ test('a match keeps one colour mood from start to finish, and seeds in a row tak
   for (let n = 0; n < 600; n++) S.step(g, [], DT);
   assert.equal(g.mood, mood);
   assert.deepEqual([7, 8, 9].map((seed) => S.createGame(seed).mood).sort(), [0, 1, 2]);
+});
+
+// ---------------------------------------------------------------- Shield Generator and Forge
+
+test('a Shield Generator, once built, gives friendly heroes in its field a barrier that soaks damage', () => {
+  const g = arena(), D = S.STRUCTS.shield;
+  const dart = place(g.heroes[AMBER + DART], MID.x, MID.y);
+  const rival = place(g.heroes[AZURE + DART], MID.x + 40, MID.y + 40);
+  const far = place(g.heroes[AMBER + PATCH], MID.x + 40 + D.radius + 20, MID.y);
+  S.addStruct(g, 'shield', 0, MID.cx + 1, MID.cy); // one cell east: 40 from dart and rival, just out of reach of far
+  run(g, D.buildTime - 0.5);
+  assert.equal(dart.shieldMax, 0, 'nothing while it is still being built');
+  run(g, 0.5 + D.absorb / D.rate + 0.1);
+  assert.equal(dart.shield, D.absorb, 'the barrier fills');
+  assert.equal(rival.shieldMax, 0, 'a rival in the field gets nothing');
+  assert.equal(far.shieldMax, 0, 'nor does a teammate outside it');
+
+  S.spawnEnemy(g, 'skitter', 0, MID.x - 20, MID.y);
+  run(g, 0.2);
+  assert.equal(dart.shield, D.absorb - S.ENEMIES.skitter.dmg);
+  assert.equal(dart.hp, dart.max, 'the barrier took the hit');
+
+  g.enemies = [];
+  place(dart, MID.x - 300, MID.y);
+  run(g, DT);
+  assert.deepEqual([dart.shieldMax, dart.shield], [0, 0], 'walking out of the field drops the barrier');
+});
+
+test('a Forge carries the same field: teammates beside it gain the barrier until it goes down', () => {
+  const g = arena(), D = S.STRUCTS.shield;
+  const forge = place(g.heroes[AMBER + FORGE], MID.x, MID.y);
+  const mate = place(g.heroes[AMBER + DART], MID.x + 50, MID.y);
+  const rival = place(g.heroes[AZURE + DART], MID.x - 50, MID.y);
+  run(g, DT);
+  assert.deepEqual([forge.shieldMax, mate.shieldMax, rival.shieldMax], [D.absorb, D.absorb, 0]);
+  Object.assign(forge, { alive: false, hp: 0, respawn: 5 });
+  run(g, DT);
+  assert.equal(mate.shieldMax, 0);
+});
+
+test('Reforge repairs the team\'s own structures in reach, and is not spent when nothing needs it', () => {
+  const g = arena(), q = S.HEROES.forge.q, me = AMBER + FORGE;
+  const forge = place(g.heroes[me], MID.x, MID.y);
+  const wall = S.addStruct(g, 'wall', 0, MID.cx + 2, MID.cy), far = S.addStruct(g, 'wall', 0, MID.cx + 8, MID.cy);
+  const theirs = S.addStruct(g, 'wall', 1, MID.cx - 2, MID.cy);
+  run(g, DT, { [me]: { q: true } });
+  assert.equal(forge.qCd, 0, 'nothing damaged: the cooldown is kept');
+  for (const st of [wall, far, theirs]) st.hp = 50;
+  run(g, DT, { [me]: { q: true } });
+  assert.deepEqual([wall.hp, far.hp, theirs.hp], [50 + q.repair, 50, 50], 'only its own team\'s, only in reach');
+  assert.equal(forge.qCd, q.cd);
+  assert.ok(forge.ult > 0, 'repairing charges Aegis');
+});
+
+test('Aegis halves the damage the whole team takes, for as long as it lasts', () => {
+  const g = arena(), r = S.HEROES.forge.r, bite = S.ENEMIES.skitter.dmg;
+  const dart = place(g.heroes[AMBER + DART], MID.x, MID.y);
+  const hitTaken = () => {
+    dart.hp = dart.max;
+    S.spawnEnemy(g, 'skitter', 0, MID.x + 20, MID.y);
+    run(g, 0.2);
+    g.enemies = [];
+    return dart.max - dart.hp;
+  };
+  g.heroes[AMBER + FORGE].ult = 100;
+  run(g, DT, { [AMBER + FORGE]: { r: true } }); // from its post, far from the Dart
+  assert.equal(hitTaken(), bite * r.taken);
+  run(g, r.time);
+  assert.equal(hitTaken(), bite, 'full damage again once it runs out');
 });

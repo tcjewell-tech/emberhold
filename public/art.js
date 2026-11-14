@@ -1,7 +1,7 @@
 // Emberhold's pixel art, drawn in code: no image files. Everything here works in art pixels
 // (one art pixel is two world units; the page scales the small canvas up with hard edges).
 // Sprites are painted once on their own little canvas, outlined, and cached.
-import { TEAMS, WORLD, CELL, ARENA, inArena } from './sim.js';
+import { TEAMS, WORLD, CELL, ARENA, STRUCTS, inArena } from './sim.js';
 
 export const PX = 0.5; // art pixels per world unit
 export const TILE = CELL * PX;
@@ -50,7 +50,7 @@ function sprite(key, w, h, draw) {
 export function heroSprite(kind, team, f = 0) {
   const T = TEAMS[team].color;
   return sprite(kind + team + f, 26, 31, (s) => {
-    const cx = 13, wide = kind === 'anvil' ? 8 : kind === 'dart' ? 5.5 : 6.5;
+    const cx = 13, wide = kind === 'anvil' ? 8 : kind === 'dart' ? 5.5 : kind === 'forge' ? 7 : 6.5;
     const cloth = kind === 'patch' ? '#e9edf2' : T, trousers = '#3d4660';
     [0, 1].forEach((k) => { const up = f === k + 1 ? 1 : 0; s.R(cx - 5 + k * 6, 22, 4, 6 - up, lit(trousers, k ? -0.25 : 0)); s.R(cx - 5 + k * 6, 27 - up, 4, 3, '#272c40'); });
     s.R(cx - wide - 2, 14, 3, 7, lit(cloth, 0.05)); s.R(cx + wide - 1, 14, 3, 7, lit(cloth, -0.35));
@@ -71,6 +71,10 @@ export function heroSprite(kind, team, f = 0) {
       s.R(cx - 6, 13, 12, 1, T); s.R(cx - 6, 21, 12, 1, T); s.R(cx + 4, 15, 3, 5, '#8a5a34'); s.R(cx + 4, 15, 3, 1, lit('#8a5a34', 0.3));
       s.ball(cx, 7.5, 5.5, 5.5, SKIN); s.E(cx, 5, 5.6, 3.6, '#6b4428'); s.E(cx - 1, 4.4, 4, 2.2, '#8a5a34'); s.ball(cx + 4.5, 3, 2.4, 2.4, '#6b4428');
       s.R(cx - 2, 8, 1, 2, INK); s.R(cx + 1, 8, 1, 2, INK);
+    } else if (kind === 'forge') { // a smith: leather apron, a hammer over the shoulder, a dark mask with a glowing slit
+      s.R(cx - 4, 13, 8, 9, '#8a5a34'); s.R(cx - 4, 13, 8, 1, '#b07a48'); s.R(cx - 1, 16, 2, 2, '#f3d06a');
+      s.R(cx + 6, 9, 2, 10, '#6b4428'); s.R(cx + 4, 6, 6, 4, STEEL); s.R(cx + 4, 6, 6, 1, lit(STEEL, 0.45));
+      s.ball(cx, 7.5, 6, 6, '#4b536e'); s.R(cx - 4, 7, 8, 3, INK); s.R(cx - 3, 8, 6, 1, '#ffb35a');
     } else {
       s.R(cx - 3, 13, 6, 8, lit(T, -0.3)); s.R(cx - 2, 15, 4, 2, '#f3d06a'); s.R(cx - 8, 12, 3, 9, '#8a5a34'); s.R(cx - 8, 12, 3, 1, '#b07a48');
       s.ball(cx, 8, 5.5, 5.5, SKIN); s.E(cx, 4.6, 6.4, 3.6, lit('#e8e2d0', -0.25)); s.E(cx - 0.6, 4, 5.4, 2.8, '#e8e2d0'); s.R(cx - 7, 6, 14, 1, lit('#e8e2d0', -0.35));
@@ -171,9 +175,10 @@ export function createArt(g) {
   return {
     S, meter, ring,
     /** x, y: where the hero's feet are. h is the hero from the snapshot. */
-    hero(h, x, y, aim, { walking, mine, t }) {
+    hero(h, x, y, aim, { walking, mine, t, aegis }) {
       const T = TEAMS[h.team].color;
       shadow(x, y, 9);
+      if (aegis) ring(x, y - 10, 23, '#bfe9ff', { gap: 2, a0: t / 250, thick: 2 });
       if (h.fortify > 0) ring(x, y - 10, 19, '#ffe9a8', { gap: 2, a0: t / 300, thick: 2 });
       if (h.overdrive > 0) ring(x, y - 10, 17, '#ff7ad9', { gap: 3, a0: -t / 120, thick: 2 });
       if (h.rush > 0) ring(x, y - 10, 15, '#5ad1ff', { gap: 4, a0: t / 90, thick: 2 });
@@ -224,6 +229,23 @@ export function createArt(g) {
       for (let k = 4; k < 15; k++) S.R(cx + Math.cos(st.aim) * k - 2, cy - 2 + Math.sin(st.aim) * k * 0.8 - 2, 4, 4, INK);
       for (let k = 4; k < 14; k++) S.R(cx + Math.cos(st.aim) * k - 1, cy - 2 + Math.sin(st.aim) * k * 0.8 - 1, 2, 1, '#c3ccdb');
       S.E(cx, cy - 1, 7, 7, INK); S.ball(cx, cy - 1, 6, 6, T);
+      if (st.hp < st.max) meter(x + 2, y + 21, 16, st.hp / st.max, T, 2);
+    },
+    /** A working Shield Generator's field: a faint disc on the ground with a slowly turning dotted rim. */
+    field(st, x, y, t) {
+      const T = TEAMS[st.team].color, r = STRUCTS.shield.radius * PX;
+      g.globalAlpha = 0.1; S.E(x + 10, y + 13, r, r, T);
+      g.globalAlpha = 0.9; ring(x + 10, y + 13, r, T, { gap: 3, a0: t / 900 }); g.globalAlpha = 1;
+    },
+    /** A pedestal with a glowing core. Grey, with a progress bar, while it is still being built. */
+    shield(st, x, y) {
+      const T = TEAMS[st.team].color, D = STRUCTS.shield, w = D.size * PX, cx = x + 10, cy = y + 10, on = !(st.wait > 0);
+      shadow(cx, cy + 7, w / 2 + 2);
+      S.E(cx, cy + 4, w / 2 + 1, 5, INK); S.E(cx, cy + 3, w / 2, 4, lit(STEEL, -0.35)); S.E(cx, cy + 2, w / 2, 3.5, STEEL);
+      S.R(cx - 2, cy - 5, 4, 7, INK); S.R(cx - 1, cy - 5, 2, 7, lit(STEEL, 0.2));
+      S.E(cx, cy - 8, 6, 6, INK); S.ball(cx, cy - 8, 5, 5, on ? T : '#6b7390');
+      if (!on) return meter(x + 2, y + 21, 16, 1 - st.wait / D.buildTime, '#ffffff', 2);
+      this.glow(cx, cy - 8, 14, T, 0.45);
       if (st.hp < st.max) meter(x + 2, y + 21, 16, st.hp / st.max, T, 2);
     },
     /** A stone bowl with a flame in the team's colour; the flame shrinks as the Ember is hurt. */

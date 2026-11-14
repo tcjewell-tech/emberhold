@@ -32,6 +32,7 @@ export function createSound() {
     'Pulse rifle': () => { note({ type: 'square', f: 720, to: 260, len: 0.07, vol: 0.07 }); note({ f: 360, to: 130, len: 0.09, vol: 0.15 }); },
     Scattergun: () => { note({ type: 'noise', f: 1100, len: 0.16, vol: 0.5 }); note({ f: 150, to: 50, len: 0.16, vol: 0.4 }); },
     Needler: () => note({ type: 'sine', f: 1300, to: 700, len: 0.06, vol: 0.14 }),
+    'Rivet gun': () => { note({ type: 'noise', f: 900, len: 0.05, vol: 0.3 }); note({ type: 'square', f: 180, to: 90, len: 0.1, vol: 0.12 }); },
     Nailgun: () => { note({ type: 'noise', f: 2600, len: 0.04, vol: 0.25 }); note({ f: 240, to: 160, len: 0.06, vol: 0.18 }); },
     Turret: () => note({ f: 300, to: 180, len: 0.06, vol: 0.12 }),
     Spit: () => note({ type: 'sine', f: 220, to: 420, len: 0.1, vol: 0.14 }),
