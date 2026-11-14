@@ -61,21 +61,21 @@ export const TEAM_SIZE = HERO_IDS.length;
 export const teamOf = (slot) => Math.floor(slot / TEAM_SIZE);
 export const HEROES = {
   anvil: {
-    name: 'Anvil', role: 'Vanguard', hp: 300, speed: 165, passive: 'Shield: soaks 100 damage, refills after 4 s unhurt',
+    name: 'Anvil', role: 'Vanguard', hp: 360, speed: 165, passive: 'Shield: soaks 100 damage, refills after 4 s unhurt',
     shield: { max: 100, delay: 4, rate: 25 },
-    gun: { name: 'Scattergun', dmg: 10, pellets: 6, spread: 0.3, rate: 1.1, range: 320, speed: 720 },
+    gun: { name: 'Scattergun', dmg: 12, pellets: 6, spread: 0.3, rate: 1.1, range: 320, speed: 720 },
     q: { name: 'Shockwave', cd: 8, r: 120, dmg: 20, push: 90, stun: 1.5, text: 'Knock back and stun nearby hostiles' },
     r: { name: 'Fortify', time: 6, taken: 0.25, taunt: 320, text: '6 s: take 75% less damage, nearby AI enemies target you' },
   },
   dart: {
     name: 'Dart', role: 'Striker', hp: 120, speed: 215, passive: 'Scavenges 2x faster',
-    gun: { name: 'Pulse rifle', dmg: 7, pellets: 1, spread: 0.03, rate: 8, range: 460, speed: 900 },
+    gun: { name: 'Pulse rifle', dmg: 4.5, pellets: 1, spread: 0.03, rate: 8, range: 460, speed: 900 },
     q: { name: 'Dash', cd: 4, dist: 150, text: 'Blink a short way in your move direction' },
     r: { name: 'Overdrive', time: 6, mult: 2, text: '6 s: double fire rate' },
   },
   patch: {
     name: 'Patch', role: 'Medic', hp: 140, speed: 185, passive: 'None',
-    gun: { name: 'Needler', dmg: 14, pellets: 1, spread: 0.02, rate: 4, range: 460, speed: 850 },
+    gun: { name: 'Needler', dmg: 13, pellets: 1, spread: 0.02, rate: 4, range: 460, speed: 850 },
     q: { name: 'Mend', cd: 7, r: 150, heal: 70, text: 'Heal teammates around you' },
     r: { name: 'Second Wind', text: 'Revive downed teammates and fully heal the team' },
   },
@@ -86,8 +86,8 @@ export const HEROES = {
     r: { name: 'Overclock', time: 8, mult: 2, text: 'Repair your structures; Turrets fire 2x for 8 s' },
   },
   forge: {
-    name: 'Forge', role: 'Support', hp: 120, speed: 150, passive: 'Shield field: Forge and teammates beside it carry a 50-point barrier',
-    gun: { name: 'Rivet gun', dmg: 15, pellets: 1, spread: 0.02, rate: 1.6, range: 170, speed: 700 },
+    name: 'Forge', role: 'Support', hp: 150, speed: 150, passive: 'Shield field: Forge and teammates beside it carry a 50-point barrier',
+    gun: { name: 'Rivet gun', dmg: 15, pellets: 1, spread: 0.02, rate: 4, range: 420, speed: 700 },
     q: { name: 'Reforge', cd: 8, r: 170, repair: 100, text: 'Repair your Walls, Turrets and Shield Generators around you' },
     r: { name: 'Aegis', time: 6, taken: 0.5, text: '6 s: your whole team takes half damage' },
   },
@@ -484,6 +484,7 @@ function ability(s, h, mx, my) {
     }
     if (!fixed) return false;
     h.ult = Math.min(100, h.ult + fixed * ULT_PER_HEAL);
+    h.stats.heal += fixed; // repairs count beside healing on the scoreboard
     addFx(s, 'fix', h.x, h.y, q.r, h.team);
   } else {
     const cx = cellOf(h.x), cy = cellOf(h.y);

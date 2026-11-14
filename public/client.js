@@ -152,7 +152,7 @@ function setupHud() {
 
 function scoreTable(s) {
   const table = el('table'), head = el('tr'), body = el('tbody');
-  for (const t of ['Hero', 'Played by', 'Damage', 'Healing', 'Scrap found', 'AI kills', 'Hero kills', 'Deaths']) head.append(el('th', '', t));
+  for (const t of ['Hero', 'Played by', 'Damage', 'Healed or repaired', 'Scrap found', 'AI kills', 'Hero kills', 'Deaths']) head.append(el('th', '', t));
   s.teams.forEach((T, k) => {
     const title = el('tr', 'teamrow'), cell = el('td', '', `Team ${TEAMS[k].name}${T.alive ? '' : ' (fallen)'}`);
     title.style.setProperty('--team', TEAMS[k].color);

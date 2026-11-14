@@ -62,7 +62,7 @@ A **Shield Generator** (35 Scrap) starts working 2 seconds after you place it. F
 within its ring carry a 50-point barrier that takes damage before their health does; it
 refills after 4 seconds without being hit and is lost on walking out of the ring.
 
-**Forge** is the fifth hero on each team, a slow, short-ranged support. It carries the same
+**Forge** is the fifth hero on each team, a slow support. It carries the same
 shield field for itself and teammates beside it. **Reforge** (Q) repairs your Walls, Turrets
 and Shield Generators around it; **Aegis** (R) halves the damage your whole team takes for
 6 seconds.
