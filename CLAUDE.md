@@ -22,6 +22,10 @@ node --test --test-name-pattern="Anvil bot raids" test/bots.test.js   # one test
 
 There is no build step, linter or bundler. The only dependency is `ws`. The code uses `import.meta.main` and `import.meta.dirname`, so it needs a recent Node (developed on v26). `.claude/launch.json` defines the preview servers `emberhold` and `emberhold-slow` (simulated lag), both on port 3000.
 
+## Committing
+
+More than one Claude session may be working in this folder at once. Stage only the files you changed, by name (`git add path/to/file`). Never `git add -A`, `git add .` or `git commit -a`: they sweep up another session's unfinished edits. A changed file you did not touch belongs to someone else: leave it alone and say so.
+
 ## Architecture
 
 One code path: the server is always authoritative, solo play included.

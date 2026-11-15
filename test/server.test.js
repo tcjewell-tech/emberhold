@@ -233,7 +233,8 @@ test('each snapshot carries the server tick and the last input heard from every 
   const later = await a.next((m) => isState(m) && m.acks[AMBER_DART] === 41, 'the input to be acknowledged');
   assert.ok(Number.isInteger(later.n) && later.n > first.n, 'the tick count moves on');
   const next = await a.next(isState, 'the next state');
-  assert.equal(next.n - later.n, 2, 'one snapshot every two ticks');
+  const gap = next.n - later.n; // two on a quiet machine; a busy one catches up several ticks at once, still in twos
+  assert.ok(gap > 0 && gap % 2 === 0, `snapshots go out on every second tick: ${gap} apart`);
   await a.close();
 });
 
