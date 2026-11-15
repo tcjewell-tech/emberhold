@@ -767,3 +767,18 @@ test('Aegis halves the damage the whole team takes, for as long as it lasts', ()
   run(g, r.time);
   assert.equal(hitTaken(), bite, 'full damage again once it runs out');
 });
+
+test('shotHit names what a shot has run into: a rival Wall but not its own team\'s, an AI enemy, a rival hero', () => {
+  const g = S.createGame(1), shot = (team, x, y) => ({ x, y, team });
+  const wall = S.addStruct(g, 'wall', 0, 40, 40);
+  assert.equal(S.shotHit(g, shot(0, wall.x, wall.y)), null, 'a team shoots through its own Walls');
+  assert.equal(S.shotHit(g, shot(1, wall.x, wall.y)).st, wall);
+  assert.equal(S.shotHit(g, shot(-1, wall.x, wall.y)).st, wall, 'AI shots are stopped by everyone\'s');
+  const e = S.spawnEnemy(g, 'skitter', 0, 1500, 1500);
+  assert.equal(S.shotHit(g, shot(0, 1505, 1500)).e, e);
+  assert.equal(S.shotHit(g, shot(-1, 1505, 1500)), null, 'AI shots pass AI enemies');
+  const rival = g.heroes[AZURE];
+  assert.equal(S.shotHit(g, shot(0, rival.x, rival.y)).h, rival);
+  assert.equal(S.shotHit(g, shot(1, rival.x, rival.y)), null, 'no friendly fire');
+  assert.equal(S.shotHit(g, shot(0, g.teams[2].ember.x, g.teams[2].ember.y)).ember, 2);
+});

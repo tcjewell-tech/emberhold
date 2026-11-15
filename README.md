@@ -30,8 +30,9 @@ The scoreboard is keyboard-only for now.
 ## Play over the internet
 
 The game is built to play over the internet: each player uses about 25 KB/s, your own hero
-answers your keys at once whatever the lag, and a dropped connection reconnects by itself and
-gives you your hero back (an empty match is kept for 60 seconds).
+answers your keys at once whatever the lag, your shots and the structures you place appear at
+once too, and a dropped connection reconnects by itself and gives you your hero back (an empty
+match is kept for 60 seconds). Hits still land when the server hears them.
 
 The server has to run somewhere the other players can reach. Start it with `npm run lan`,
 which listens on every network interface, on the port in the `PORT` environment variable or

@@ -1,8 +1,9 @@
 // Emberhold browser client: sends this player's input and draws the snapshots the server
-// sends back. No rules live here; canBuild is imported only to colour the build ghost.
-import { WORLD, CELL, TEAMS, HEROES, HERO_IDS, STRUCTS, ENEMIES, EMBER_R, HERO_R, BUILD_RANGE, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, moveHero, ARENA, POWERUPS, TEAM_SIZE, teamOf } from './sim.js';
+// sends back. No rules live here: canBuild, moveHero and shotHit are the sim's own, imported
+// to colour the build ghost and to predict this player's own steps, shots and builds.
+import { WORLD, CELL, TEAMS, HEROES, HERO_IDS, STRUCTS, ENEMIES, EMBER_R, HERO_R, BUILD_RANGE, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, moveHero, shotHit, inArena, ARENA, POWERUPS, TEAM_SIZE, teamOf } from './sim.js';
 import { interpolate } from './interp.js';
-import { createTimeline, createPredictor, createUnpacker } from './net.js';
+import { createTimeline, createPredictor, createGunPredictor, createBuildPredictor, createUnpacker } from './net.js';
 import { PX, TILE, MOODS, ground, heroSprite, createArt } from './art.js';
 import { createSound } from './sound.js';
 import { createTouch } from './touch.js';
@@ -27,11 +28,13 @@ const key = crypto.getRandomValues(new Uint32Array(4)).join('-'); // proves a re
 const snaps = []; // recent snapshots, each with the server time (ms) it shows
 const cam = { x: WORLD.w / 2, y: WORLD.h / 2, scale: 1 };
 const me = createPredictor(); // this player's hero, predicted locally
+const gun = createGunPredictor(), builder = createBuildPredictor(); // and its shots and the structures it orders
+let firing = false; // what we last told the server about the trigger
 const keys = new Set();
 const mouse = { x: innerWidth / 2, y: innerHeight / 2, wx: 0, wy: 0, left: false, right: false };
 const seen = { phase: '', wave: -1, alive: [true, true, true] };
 let buildType = null, ghostWhy = null, lastOrder = '', dark = 0, lastFrame = performance.now(), zoom = 2, mood = -1, bannerUntil = 0;
-const heard = { id: 0, phase: '', hp: 0, built: 0, hitAt: 0, aegis: [] }, strides = new Map();
+const heard = { id: 0, phase: '', hp: 0, hitAt: 0, aegis: [] }, strides = new Map();
 // The big moments throw sparks and jolt the camera. Both are for show only: they live here, not in the match.
 // n sparks start `spread` world units out from the point (lifted `lift`), fly at up to `speed`, rise at `up` and last `life` s;
 // `size` is their width in art pixels and `jolt` how far the camera is knocked when it happens mid-screen.
@@ -69,6 +72,8 @@ function connect() {
       snaps.push({ at, s: m.s });
       if (snaps.length > 30) snaps.shift();
       if (slot >= 0 && m.s.heroes[slot].alive) me.heard(m.acks[slot], m.s.heroes[slot]);
+      if (slot >= 0) gun.heard(m.s.shots, slot, m.s.nextId - 1, performance.now()); // not while watching: Turret and AI shots have owner -1
+      builder.heard(m.s.structs, performance.now());
       hear(m.s);
       onState(m.s);
     } else if (m.t === 'lobby') {
@@ -208,7 +213,7 @@ function hear(s) {
   if (heard.id && mine) { // not on the first snapshot, when everything is new
     const guns = new Map();
     for (const sh of s.shots) {
-      if (sh.id <= heard.id) continue;
+      if (sh.id <= heard.id || gun.hides(sh.id)) continue; // a shot we predicted was heard when we fired it
       const name = sh.owner >= 0 ? HEROES[s.heroes[sh.owner].kind].gun.name : sh.team < 0 ? 'Spit' : 'Turret', k = name + sh.owner;
       guns.set(k, [name, Math.max(guns.get(k)?.[1] ?? 0, near(sh) * (sh.owner === slot ? 1 : 0.6))]); // one sound per shooter, not per pellet
     }
@@ -232,13 +237,13 @@ function hear(s) {
       else if (s.phase === 'day') sound.play('Dawn');
       else if (s.phase === 'over') sound.play(s.winner === team ? 'Victory' : 'Ember lost');
     }
-    const now = performance.now(), built = s.structs.reduce((n, st) => n + (st.team === team && st.ttl === 0), 0);
+    const now = performance.now();
     if (mine.ember.hp < heard.hp && now > heard.hitAt + 900) {
       heard.hitAt = now;
       sound.play('Ember hit', 0.8);
     }
-    if (built > heard.built) sound.play('Build', 0.7);
-    heard.built = built;
+    // A teammate's new structure. Our own was heard when we ordered it (see place).
+    if (s.structs.some((st) => st.id > heard.id && st.team === team && st.ttl === 0 && !builder.has(st.cx, st.cy))) sound.play('Build', 0.7);
   }
   Object.assign(heard, { id: s.nextId - 1, phase: s.phase, hp: mine ? mine.ember.hp : 0 });
 }
@@ -301,11 +306,12 @@ function hud() {
   $('r').classList.toggle('ready', h.alive && h.ult >= 100);
   $('r').lastChild.textContent = h.ult >= 100 ? 'Ready' : `${Math.floor(h.ult)}% charged`;
 
-  $('scrap').lastChild.textContent = T.scrap;
+  const scrap = Math.max(0, T.scrap - builder.cost()); // what we have just ordered is already spent
+  $('scrap').lastChild.textContent = scrap;
   for (const b of $('build').querySelectorAll('button[data-type]')) {
     const cost = buildCost(h.kind, b.dataset.type);
     b.lastChild.textContent = `${cost} Scrap`;
-    b.classList.toggle('poor', T.scrap < cost);
+    b.classList.toggle('poor', scrap < cost);
     b.classList.toggle('on', buildType === b.dataset.type);
   }
 
@@ -369,7 +375,23 @@ function sendInput(extra) {
     if (fire) me.aim = auto.aim;
     else if (mx || my) me.aim = Math.atan2(my, mx); // nothing to shoot: face the way we walk
   }
+  firing = fire && ws.readyState === 1; // nothing fires on screen while the connection is down
   send({ t: 'input', seq, mx, my, aim: me.aim, fire, use, ...extra });
+}
+
+/** canBuild, counting what we have ordered and not yet heard back about: those cells are taken and their Scrap is spent. */
+function mayBuild(type, cx, cy) {
+  if (builder.has(cx, cy)) return 'occupied';
+  const h = latest.heroes[slot], why = canBuild(latest, slot, type, cx, cy);
+  return why === null && latest.teams[h.team].scrap - builder.cost() < buildCost(h.kind, type) ? 'scrap' : why;
+}
+
+/** Order a structure and show it at once. The server's answer confirms it or, within a second, takes it away again. */
+function place(type, cx, cy) {
+  const h = latest.heroes[slot], hp = STRUCTS[type].hp;
+  builder.place({ type, team: h.team, cx, cy, x: cx * CELL + CELL / 2, y: cy * CELL + CELL / 2, hp, max: hp, aim: 0, ttl: 0, wait: STRUCTS[type].buildTime ?? 0, cost: buildCost(h.kind, type) }, performance.now());
+  sound.play('Build', 0.7);
+  sendInput({ build: { type, cx, cy } });
 }
 
 function setBuild(type) {
@@ -385,7 +407,7 @@ function order() {
   const cx = Math.floor(at.x / CELL), cy = Math.floor(at.y / CELL);
   const key = `${mouse.left}${buildType}${cx},${cy}`;
   if (key === lastOrder) return;
-  if (mouse.left && canBuild(latest, slot, buildType, cx, cy) === null) sendInput({ build: { type: buildType, cx, cy } });
+  if (mouse.left && mayBuild(buildType, cx, cy) === null) place(buildType, cx, cy);
   else if (mouse.right) sendInput({ remove: { cx, cy } });
   else return;
   lastOrder = key;
@@ -496,7 +518,7 @@ $('auto').onclick = () => {
   if (!h.alive) say('You are down');
   else if (!piece) say('Nothing to build: save up more Scrap');
   else if (!piece.ready) say('Go closer to your Ember to build');
-  else sendInput({ build: { type: piece.type, cx: piece.cx, cy: piece.cy } });
+  else if (mayBuild(piece.type, piece.cx, piece.cy) === null) place(piece.type, piece.cx, piece.cy); // else it is already on its way
 };
 
 function showSettings() {
@@ -572,7 +594,7 @@ function wear(k) {
 }
 
 /** Night: darken the screen, with pools of light round Embers, heroes, Turrets and shots. */
-function nightfall(s, X, Y) {
+function nightfall(s, X, Y, shots) {
   dark += ((s.phase === 'night' ? 1 : 0) - dark) * 0.04;
   if (dark < 0.02) return;
   shade.globalCompositeOperation = 'source-over';
@@ -591,7 +613,7 @@ function nightfall(s, X, Y) {
   for (const T of s.teams) if (T.alive) light(X(T.ember.x), Y(T.ember.y) - 6, 230);
   for (const h of s.heroes) if (h.alive) h.i === slot && me.known ? light(X(me.x), Y(me.y) - 6, 150) : light(X(h.x), Y(h.y) - 6, 95);
   for (const st of s.structs) if (st.type === 'turret' || st.type === 'shield') light(X(st.x), Y(st.y), 65);
-  for (const sh of s.shots) light(X(sh.x), Y(sh.y), 16);
+  for (const sh of shots) light(X(sh.x), Y(sh.y), 16);
   ctx.drawImage(shadeCanvas, 0, 0);
 }
 
@@ -600,7 +622,7 @@ function drawGhost(X, Y) {
   const h = latest.heroes[slot];
   if (!h.alive) return;
   const cx = Math.floor(mouse.wx / CELL), cy = Math.floor(mouse.wy / CELL), x = X(cx * CELL), y = Y(cy * CELL);
-  ghostWhy = canBuild(latest, slot, buildType, cx, cy);
+  ghostWhy = mayBuild(buildType, cx, cy);
   const col = ghostWhy ? '#ff6b6b' : '#7dffa8';
   ctx.globalAlpha = 0.3;
   art.S.R(x, y, TILE, TILE, col);
@@ -628,7 +650,8 @@ function draw(s, now) {
   // Everything that stands on the ground, drawn back to front so nearer things overlap farther ones.
   const standing = [];
   const stand = (y, paint) => standing.push([y, paint]);
-  for (const st of s.structs) {
+  builder.shown(s.structs);
+  for (const st of [...s.structs, ...builder.list()]) { // with what we have ordered, until the server's own takes its place
     if (!inView(st)) continue;
     const x = X(st.cx * CELL), y = Y(st.cy * CELL);
     if (st.type === 'spikes') art.spikes(st, x, y); // flat on the ground: under everything
@@ -655,9 +678,10 @@ function draw(s, now) {
   standing.sort((a, b) => a[0] - b[0]).forEach(([, paint]) => paint());
 
   s.teams.forEach((T, k) => T.alive && inView(T.ember, 160) && art.glow(X(T.ember.x), Y(T.ember.y) - 8, 90 + 60 * dark, TEAMS[k].color, 0.2));
-  nightfall(s, X, Y);
+  const shots = [...s.shots.filter((sh) => !gun.hides(sh.id)), ...gun.shots]; // our own are drawn where we predict them, not where the server last saw them
+  nightfall(s, X, Y, shots);
   if (dark > 0.3) for (const e of s.enemies) if (inView(e)) art.eyes(e, X(e.x), Y(e.y) + ENEMIES[e.type].r * PX * 0.6); // a wave is seen coming
-  for (const sh of s.shots) if (inView(sh)) art.shot(sh, X(sh.x), Y(sh.y));
+  for (const sh of shots) if (inView(sh)) art.shot(sh, X(sh.x), Y(sh.y));
   for (const f of s.fx) if (inView(f, 200)) art.fx(f, X(f.x), Y(f.y), f.r * PX);
   for (const p of sparks) if (inView(p)) art.spark(p, X(p.x), Y(p.y));
   if (buildType && slot >= 0) drawGhost(X, Y);
@@ -676,6 +700,11 @@ function frame(now) {
   while (k > 0 && snaps[k].at > at) k--;
   const a = snaps[k], b = snaps[k + 1];
   follow(dt);
+  if (slot >= 0) { // our own gun fires on screen at once; the server's copies of those shots are hidden when they arrive
+    const h = latest.heroes[slot], can = firing && h.alive && me.known && !(h.stun > 0) && latest.phase !== 'over';
+    const from = can ? { x: me.x, y: me.y, aim: me.aim, team: h.team } : null, def = HEROES[h.kind];
+    if (gun.step(dt, now, from, def.gun, h.overdrive > 0 ? HEROES.dart.r.mult : 1, (sh) => !inArena(sh.x, sh.y) || shotHit(latest, sh) !== null)) sound.play(def.gun.name);
+  }
   for (const p of sparks) { // they slow as they fly and sink a little, like embers
     p.x += p.vx * dt;
     p.y += p.vy * dt;

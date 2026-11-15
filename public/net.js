@@ -84,6 +84,98 @@ export function createPredictor(snap = 120) {
 }
 
 /**
+ * This player's own shots, drawn the moment the trigger is pulled instead of a round trip later,
+ * when the server's copies arrive. step() fires local stand-ins at the gun's own rate and flies
+ * them; heard() is shown each snapshot's shots and hides the server's copy of every stand-in, so
+ * no shot is drawn twice. A shot of ours that nobody predicted is drawn as usual, and a stand-in
+ * the server never answers just flies out: only the picture is predicted, never a hit.
+ * patience: ms a stand-in waits for its copy before we stop expecting one.
+ */
+export function createGunPredictor(patience = 1000) {
+  const shots = [], owed = [], hidden = new Set(); // owed: when each unanswered stand-in gives up
+  let cd = 0, last = 0;
+  return {
+    shots,
+    /**
+     * dt seconds pass, ending at local time now (ms). from is { x, y, aim, team } while the trigger is
+     * held and the hero can fire, else null. gun: its row in HEROES; mult: fire-rate multiplier;
+     * blocked(shot): has it hit something or left the arena. Returns true if a volley was fired.
+     */
+    step(dt, now, from, gun, mult, blocked, random = Math.random) {
+      cd = Math.max(-dt, cd - dt); // the sim's own cooldown rule, so the two keep the same beat
+      const fired = from !== null && cd <= 0;
+      if (fired) {
+        cd += 1 / (gun.rate * mult);
+        for (let p = 0; p < gun.pellets; p++) {
+          const a = from.aim + (random() - 0.5) * gun.spread; // the server rolls its own spread: ours only looks the part
+          shots.push({ x: from.x, y: from.y, vx: Math.cos(a) * gun.speed, vy: Math.sin(a) * gun.speed, ttl: gun.range / gun.speed, team: from.team });
+          owed.push(now + patience);
+        }
+      }
+      for (let k = shots.length - 1; k >= 0; k--) {
+        const sh = shots[k];
+        sh.x += sh.vx * dt;
+        sh.y += sh.vy * dt;
+        sh.ttl -= dt;
+        if (sh.ttl <= 0 || blocked(sh)) shots.splice(k, 1);
+      }
+      return fired;
+    },
+    /** A snapshot arrived at local time now: its shots, our hero's slot, and the newest id it has given out. */
+    heard(all, slot, newest, now) {
+      while (owed.length && owed[0] < now) owed.shift();
+      const still = new Set();
+      for (const sh of all) {
+        if (sh.owner !== slot) continue;
+        if (sh.id > last && owed.length) {
+          owed.shift();
+          hidden.add(sh.id);
+        }
+        if (hidden.has(sh.id)) still.add(sh.id);
+      }
+      for (const id of hidden) if (!still.has(id)) hidden.delete(id);
+      last = newest; // ids start again in a new match, which this follows down
+    },
+    /** Is this server shot one we are already drawing a stand-in for? */
+    hides: (id) => hidden.has(id),
+  };
+}
+
+/**
+ * Structures this player has just ordered, shown at once while the server's answer is on its way.
+ * place() adds one. heard() is shown the newest snapshot's structures: an order whose cell is
+ * now built on is paid for, one still unanswered after `patience` ms was refused and is dropped,
+ * and so is a paid one whose structure is already gone again. shown() is given the structures
+ * being drawn (a little behind the newest), and drops each paid order once they include it, so
+ * the stand-in hands over to the real thing without a gap.
+ */
+export function createBuildPredictor(patience = 1000) {
+  let orders = [];
+  const at = (list, o) => list.some((st) => st.cx === o.cx && st.cy === o.cy);
+  return {
+    list: () => orders,
+    /** o: a structure-shaped object (type, team, cx, cy, ...) with its cost in Scrap. */
+    place(o, now) {
+      orders.push({ ...o, paid: false, until: now + patience });
+    },
+    heard(structs, now) {
+      orders = orders.filter((o) => {
+        const built = at(structs, o);
+        if (o.paid && !built) return false; // built, and destroyed or removed before the picture ever showed it
+        o.paid = built;
+        return built || o.until > now;
+      });
+    },
+    shown(structs) {
+      orders = orders.filter((o) => !(o.paid && at(structs, o)));
+    },
+    has: (cx, cy) => at(orders, { cx, cy }),
+    /** Scrap promised to orders the server has not yet charged for. */
+    cost: () => orders.reduce((t, o) => t + (o.paid ? 0 : o.cost), 0),
+  };
+}
+
+/**
  * Reads the server's messages. Every message arrives as one stream of raw-deflate data
  * (newline-separated JSON), compressed by the server itself: some hosts' proxies strip the
  * WebSocket's own compression, which would send each player about 260 KB/s instead of about 25.

@@ -740,6 +740,23 @@ function separate(s) {
 
 // ---------------------------------------------------------------- shots
 
+/**
+ * What a shot has run into where it now is, or null: a rival's blocking structure (st), a rival
+ * Ember (ember: its team), an AI enemy (e) or a rival hero (h), tried in that order. A shot is
+ * hostile to everything not on its own team; AI shots (team -1) are hostile to all. The client
+ * asks the same of the shots it predicts, so they stop where the server's will.
+ */
+export function shotHit(s, sh) {
+  const st = structAt(s, cellOf(sh.x), cellOf(sh.y));
+  if (blocks(st) && st.team !== sh.team) return { st };
+  const ember = s.teams.findIndex((T, i) => T.alive && i !== sh.team && dist2(sh.x, sh.y, T.ember.x, T.ember.y) < EMBER_R * EMBER_R);
+  if (ember >= 0) return { ember };
+  const e = sh.team >= 0 && s.enemies.find((o) => !o.dead && dist2(sh.x, sh.y, o.x, o.y) < (ENEMIES[o.type].r + 3) ** 2);
+  if (e) return { e };
+  const h = s.heroes.find((o) => o.alive && o.team !== sh.team && dist2(sh.x, sh.y, o.x, o.y) < (HERO_R + 3) ** 2);
+  return h ? { h } : null;
+}
+
 function updateShots(s, dt) {
   for (const sh of s.shots) {
     sh.x += sh.vx * dt;
@@ -749,30 +766,13 @@ function updateShots(s, dt) {
       sh.dead = true;
       continue;
     }
-    // A shot is hostile to everything not on its own team; AI shots (team -1) are hostile to all.
-    const st = structAt(s, cellOf(sh.x), cellOf(sh.y));
-    if (blocks(st) && st.team !== sh.team) {
-      hurtStruct(s, st, sh.dmg, sh.owner);
-      sh.dead = true;
-      continue;
-    }
-    const k = s.teams.findIndex((T, i) => T.alive && i !== sh.team && dist2(sh.x, sh.y, T.ember.x, T.ember.y) < EMBER_R * EMBER_R);
-    if (k >= 0) {
-      hurtEmber(s, k, sh.dmg * (sh.team >= 0 ? EMBER_ARMOR : 1), sh.team, sh.owner);
-      sh.dead = true;
-      continue;
-    }
-    const e = sh.team >= 0 && s.enemies.find((o) => !o.dead && dist2(sh.x, sh.y, o.x, o.y) < (ENEMIES[o.type].r + 3) ** 2);
-    if (e) {
-      hurtEnemy(s, e, sh.dmg, sh.team, sh.owner);
-      sh.dead = true;
-      continue;
-    }
-    const h = s.heroes.find((o) => o.alive && o.team !== sh.team && dist2(sh.x, sh.y, o.x, o.y) < (HERO_R + 3) ** 2);
-    if (h) {
-      hurtHero(s, h, sh.dmg, sh.team, sh.owner);
-      sh.dead = true;
-    }
+    const hit = shotHit(s, sh);
+    if (!hit) continue;
+    if (hit.st) hurtStruct(s, hit.st, sh.dmg, sh.owner);
+    else if (hit.e) hurtEnemy(s, hit.e, sh.dmg, sh.team, sh.owner);
+    else if (hit.h) hurtHero(s, hit.h, sh.dmg, sh.team, sh.owner);
+    else hurtEmber(s, hit.ember, sh.dmg * (sh.team >= 0 ? EMBER_ARMOR : 1), sh.team, sh.owner);
+    sh.dead = true;
   }
 }
 

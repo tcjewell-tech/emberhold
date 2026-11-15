@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTimeline, createPredictor } from '../public/net.js';
+import { createTimeline, createPredictor, createGunPredictor, createBuildPredictor } from '../public/net.js';
 
 // ---------------------------------------------------------------- timeline
 
@@ -126,4 +126,126 @@ test('a snapshot from before the server heard us is not mistaken for an error', 
   me.heard(0, { x: 0, y: 0 });
   for (let k = 0; k < 60; k++) me.settle(1 / 60);
   assert.equal(me.x, 30);
+});
+
+// ---------------------------------------------------------------- own shots and builds, predicted
+
+const GUN = { rate: 4, pellets: 1, spread: 0, range: 400, speed: 800 };
+const FROM = { x: 100, y: 100, aim: 0, team: 0 };
+const FRAME = 1 / 60, never = () => false;
+const mine = (id) => ({ id, owner: 3 });
+
+test('a held trigger fires a stand-in shot at once, then at the gun\'s own rate', () => {
+  const gun = createGunPredictor();
+  assert.equal(gun.step(FRAME, 0, FROM, GUN, 1, never), true, 'on the very first frame');
+  assert.equal(gun.shots.length, 1);
+  assert.ok(Math.abs(gun.shots[0].x - (100 + 800 * FRAME)) < 1e-9 && gun.shots[0].y === 100, 'it flies along the aim');
+  let volleys = 1;
+  for (let f = 1; f < 600; f++) volleys += gun.step(FRAME, f * 1000 * FRAME, FROM, GUN, 1, never);
+  assert.ok(volleys === 40 || volleys === 41, `10 s at 4 a second: ${volleys}`);
+
+  const fast = createGunPredictor();
+  let doubled = 0;
+  for (let f = 0; f < 600; f++) doubled += fast.step(FRAME, f * 1000 * FRAME, FROM, GUN, 2, never);
+  assert.ok(doubled === 80 || doubled === 81, `twice as fast under a multiplier: ${doubled}`);
+
+  const idle = createGunPredictor();
+  assert.equal(idle.step(FRAME, 0, null, GUN, 1, never), false, 'no trigger, no shot');
+  assert.equal(idle.shots.length, 0);
+});
+
+test('a scattergun fires every pellet, fanned across its spread', () => {
+  const gun = createGunPredictor(), rolls = [0, 0.5, 1];
+  gun.step(FRAME, 0, FROM, { ...GUN, pellets: 3, spread: 0.4 }, 1, never, () => rolls.shift());
+  assert.deepEqual(gun.shots.map((sh) => +Math.atan2(sh.vy, sh.vx).toFixed(6)), [-0.2, 0, 0.2]);
+});
+
+test('stand-in shots fly until their range runs out or something blocks them', () => {
+  const gun = createGunPredictor();
+  gun.step(FRAME, 0, FROM, GUN, 1, never);
+  for (let f = 1; f < 29; f++) gun.step(FRAME, f, null, GUN, 1, never);
+  assert.equal(gun.shots.length, 1, 'still in range after 29 frames (387 of 400 units)');
+  gun.step(FRAME, 30, null, GUN, 1, never);
+  gun.step(FRAME, 31, null, GUN, 1, never);
+  assert.equal(gun.shots.length, 0, 'spent');
+
+  gun.step(1, 2000, null, GUN, 1, never); // let the cooldown run out
+  gun.step(FRAME, 3000, FROM, GUN, 1, (sh) => sh.x > 150);
+  for (let f = 0; f < 5; f++) gun.step(FRAME, 3000, null, GUN, 1, (sh) => sh.x > 150);
+  assert.equal(gun.shots.length, 0, 'stopped by what it ran into');
+});
+
+test('the server\'s copy of a predicted shot is hidden; a shot nobody predicted is shown', () => {
+  const gun = createGunPredictor();
+  gun.heard([mine(5)], 3, 5, 0);
+  assert.equal(gun.hides(5), false, 'fired before we predicted anything: drawn as the server sends it');
+  gun.step(FRAME, 100, FROM, GUN, 1, never);
+  gun.heard([mine(5), mine(9), { id: 10, owner: 4 }], 3, 10, 250);
+  assert.equal(gun.hides(9), true, 'the copy of our stand-in');
+  assert.equal(gun.hides(5), false);
+  assert.equal(gun.hides(10), false, 'someone else\'s shot is never hidden');
+  gun.heard([mine(9), mine(12)], 3, 12, 280);
+  assert.equal(gun.hides(9), true, 'for as long as it flies');
+  assert.equal(gun.hides(12), false, 'one stand-in hides one copy, not the next shot as well');
+  gun.heard([], 3, 12, 310);
+  assert.equal(gun.hides(9), false, 'forgotten once it is gone');
+});
+
+test('a stand-in the server never answers stops waiting, so a later shot is not hidden by mistake', () => {
+  const gun = createGunPredictor(1000);
+  gun.step(FRAME, 0, FROM, GUN, 1, never);
+  gun.heard([mine(7)], 3, 7, 1500);
+  assert.equal(gun.hides(7), false);
+});
+
+test('a new match starts its ids again, and prediction carries on', () => {
+  const gun = createGunPredictor();
+  gun.heard([], 3, 5000, 0);
+  gun.heard([], 3, 20, 100); // the new match's first snapshot
+  gun.step(FRAME, 200, FROM, GUN, 1, never);
+  gun.heard([mine(31)], 3, 31, 300);
+  assert.equal(gun.hides(31), true);
+});
+
+const wall = (cx, cy) => ({ type: 'wall', cx, cy, cost: 10 });
+
+test('an ordered structure is shown at once, charged until the server has it and kept until the drawn world has it', () => {
+  const b = createBuildPredictor(1000);
+  b.place(wall(4, 5), 0);
+  assert.equal(b.list().length, 1);
+  assert.equal(b.has(4, 5), true);
+  assert.equal(b.cost(), 10);
+  b.heard([], 100);
+  b.shown([]);
+  assert.equal(b.cost(), 10, 'no answer yet');
+  b.heard([{ cx: 4, cy: 5 }], 200);
+  assert.equal(b.cost(), 0, 'the newest snapshot has it: its Scrap is already gone from the team\'s');
+  b.shown([]);
+  assert.equal(b.list().length, 1, 'but the picture, which runs behind, does not show it yet');
+  b.heard([{ cx: 4, cy: 5 }], 5000);
+  assert.equal(b.list().length, 1, 'a paid order does not time out while its structure stands');
+  b.shown([{ cx: 4, cy: 5 }]);
+  assert.equal(b.list().length, 0, 'the real one has taken its place');
+  assert.equal(b.has(4, 5), false);
+});
+
+test('an order the server refuses is taken away when its patience runs out', () => {
+  const b = createBuildPredictor(1000);
+  b.place(wall(1, 1), 0);
+  b.place(wall(2, 1), 600);
+  b.heard([], 999);
+  assert.equal(b.list().length, 2);
+  b.heard([], 1001);
+  assert.deepEqual(b.list().map((o) => o.cx), [2], 'the first has waited a second');
+  assert.equal(b.cost(), 10);
+});
+
+test('an order that was built and is gone again before the picture showed it is dropped, not left as a ghost', () => {
+  const b = createBuildPredictor(1000);
+  b.place(wall(4, 5), 0);
+  b.heard([{ cx: 4, cy: 5 }], 200); // built
+  b.heard([], 900); // destroyed, or removed, while the tab was in the background and nothing was being drawn
+  b.shown([]);
+  assert.equal(b.list().length, 0);
+  assert.equal(b.has(4, 5), false, 'and the cell can be built on again');
 });
