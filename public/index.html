@@ -120,6 +120,7 @@
   #auto { display: none !important; }
   body.touch.autobuild #auto { display: block !important; font: 700 var(--s) var(--pix); color: var(--line); text-shadow: none; background: var(--gold); border: 2px solid var(--line); padding: 16px 14px; }
   body.touch.autobuild #build button[data-type], body.touch.autobuild #rm { display: none; }
+  #scores:not([hidden]) ~ #gear, #end:not([hidden]) ~ #gear { display: none; } /* their sheets reach the corner it sits in */
   #gear { position: fixed; top: 74px; right: 10px; font: inherit; color: var(--text); text-shadow: var(--hard); background: var(--panel); border: 4px solid var(--line); box-shadow: inset 0 0 0 2px var(--edge), 4px 4px 0 var(--line); padding: 6px 10px; cursor: pointer; }
   #settings .sheet { gap: 12px; }
   #settings button { font: inherit; color: var(--text); text-shadow: inherit; background: var(--well); border: 2px solid var(--edge); padding: 12px; cursor: pointer; text-align: left; }
