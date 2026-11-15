@@ -14,6 +14,8 @@ npm start          # http://localhost:3000, this computer only (PORT env overrid
 npm run lan        # same, bound to 0.0.0.0: for a LAN, or as the start command on an internet host
 npm start -- --lag=150 --jitter=40   # simulate a slow line (round-trip ms, extra ms each way)
 npm test           # node --test "test/*.test.js"
+npm run balance    # 60 bot-only matches from a random seed, every hero checked against bounds (under a minute)
+node test/balance.test.js 100 4242   # the same for any match count and first seed; a seed repeats a run exactly
 node --test test/bots.test.js                                     # one file
 node --test --test-name-pattern="Anvil bot raids" test/bots.test.js   # one test
 ```
@@ -49,20 +51,17 @@ One code path: the server is always authoritative, solo play included.
 
 Node's built-in runner, no test dependencies. `test/sim.test.js` covers rules, `test/bots.test.js` covers bot decisions plus seeded full bot-only matches checked for sane state, `test/server.test.js` starts a real server on a random port with WebSocket clients (`newGame` is injectable so a test can start from a prepared match).
 
+`test/balance.test.js` is the balance harness. It plays bot-only matches on worker threads and fails when a hero's damage per minute or deaths per match stray too far from the average of the five, when a team wins far from a third of the matches, or when matches run too short, too long or never end. Under `npm test` it plays 12 fixed-seed matches against wide bounds (`QUICK`); given a match count on the command line it plays that many against tight ones (`FULL`) and prints a per-hero table.
+
 Bot tests mostly build a state by hand (place heroes, set `g.wave`, clear `g.wrecks`) and assert on a single `botInput` result, using the `quiet()` and `heading()` helpers in `test/bots.test.js`.
 
 Nothing automated covers the browser client; check drawing and HUD changes by playing in a browser.
 
 ## Balance changes
 
-Hero, structure and enemy numbers are the tables at the top of `sim.js` (`HEROES`, `STRUCTS`, `ENEMIES`). Judge a balance or bot-behaviour change by running bot-only matches headlessly over several seeds and comparing per-hero `stats` (`dmg`, `kills`, `pvp`, `deaths`), match length and which team wins:
+Hero, structure and enemy numbers are the tables at the top of `sim.js` (`HEROES`, `STRUCTS`, `ENEMIES`). Judge a balance or bot-behaviour change with the harness: run `node test/balance.test.js 60 1001` before and after (the same first seed plays the same matches) and compare the tables, then `npm run balance` for a fresh random sample. Change a bound in `FULL` or `QUICK` only on purpose, and say why in the commit.
 
-```js
-const g = createGame(seed);
-while (g.phase !== 'over' && g.t < 3600) step(g, g.heroes.map((h) => botInput(g, h.i)), 1 / 60);
-```
-
-Nine matches is a noisy sample; win counts per team swing widely at that size.
+Damage per minute settles to within a point or two of the average by 12 matches. Deaths need 60 to settle to about a tenth, and a team's win count swings by several even then.
 
 ## Known limits
 

@@ -84,7 +84,11 @@ and Shield Generators around it; **Aegis** (R) halves the damage your whole team
 
 ```bash
 npm test
+npm run balance
 ```
+
+`npm run balance` plays 60 bot-only matches and reports each hero's damage, kills and deaths
+beside the lineup's average, failing if a hero strays too far from it.
 
 `public/sim.js` holds every rule and runs headless; `public/bots.js` plays the bot heroes;
 `server.js` runs the one authoritative match; `public/client.js` only sends input and draws;

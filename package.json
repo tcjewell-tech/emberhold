@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node server.js",
     "lan": "node server.js --lan",
-    "test": "node --test \"test/*.test.js\""
+    "test": "node --test \"test/*.test.js\"",
+    "balance": "node test/balance.test.js 60"
   },
   "dependencies": {
     "ws": "^8.22.2"
