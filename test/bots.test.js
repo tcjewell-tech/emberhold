@@ -333,3 +333,13 @@ test('the Forge bot keeps Aegis for the moment a wave lands on its squad', () =>
   g.heroes[AMBER + DART].hp *= 0.4;
   assert.ok(botInput(g, forge.i).r, 'two badly hurt teammates, as a raid leaves them: it does not');
 });
+
+test('a hurt Anvil bot Fortifies under fire from range, not only with a foe at arm’s length', () => {
+  const g = quiet(), anvil = place(g.heroes[AMBER + ANVIL], MID.x, MID.y);
+  place(g.heroes[AZURE + DART], MID.x + 400, MID.y); // well outside the Anvil's own gun
+  assert.equal(botInput(g, anvil.i).r, false, 'unhurt: it keeps Fortify');
+  anvil.hp = anvil.max * 0.5;
+  assert.equal(botInput(g, anvil.i).r, true);
+  place(g.heroes[AZURE + DART], MID.x + 900, MID.y);
+  assert.equal(botInput(g, anvil.i).r, false, 'nobody in sight: nothing to Fortify against');
+});

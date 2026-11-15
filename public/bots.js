@@ -228,7 +228,8 @@ export function botInput(s, i, spend = true) {
   if (h.kind === 'anvil') {
     const close = foeD < def.q.r * 0.8 ? crowd(s, h, def.q.r) : 0;
     out.q = close >= 2 || (close === 1 && foe.i !== undefined);
-    out.r = foeD < 250 && (h.hp < h.max * 0.6 || crowd(s, h, 250) >= 4);
+    // Fortify answers being hurt by anything that can reach it, guns at range included, not only a crowd at arm's length.
+    out.r = (h.hp < h.max * 0.6 && foeD < SIGHT) || (foeD < 250 && crowd(s, h, 250) >= 4);
   } else if (h.kind === 'dart') {
     out.q = foeD < 90;
     out.r = foeD < gun.range;
