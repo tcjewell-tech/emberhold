@@ -1,9 +1,10 @@
 // Bot heroes. botInput() looks at the match and returns the same input object a human
 // client sends, so bots play by exactly the rules players do. It keeps no memory.
-import { HEROES, HERO_IDS, STRUCTS, TEAMS, CELL, EMBER_R, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, post, structAt, nearestHostile } from './sim.js';
+import { HEROES, HERO_IDS, STRUCTS, ENEMIES, TEAMS, CELL, EMBER_R, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, post, structAt, nearestHostile, enemyDmg } from './sim.js';
 
 const SIGHT = 520;
 const LEASH = 280; // how far from their Ember bots will chase at night
+const AEGIS_WORTH = 0.35; // a Forge spends Aegis when the wave that is landing would cost the squad this share of its health while it lasts
 const gap = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
 const MID = { x: (TEAMS[0].x + TEAMS[1].x + TEAMS[2].x) / 3, y: (TEAMS[0].y + TEAMS[1].y + TEAMS[2].y) / 3 };
@@ -121,6 +122,19 @@ function nearestRivalTurret(s, h, range) {
 const crowd = (s, h, r) =>
   s.enemies.filter((e) => gap(h, e) < r).length + s.heroes.filter((o) => o.alive && o.team !== h.team && gap(h, o) < r).length;
 
+/** Damage a second that the AI enemies now in reach of this team's living heroes can deal them: the size of the wave that is landing at this moment. */
+function incoming(s, team) {
+  const mates = s.heroes.filter((o) => o.team === team && o.alive);
+  const reach = (e, r) => mates.some((m) => gap(m, e) < r);
+  let dps = 0;
+  for (const e of s.enemies) {
+    const d = ENEMIES[e.type];
+    if (reach(e, d.range ?? d.r + 60)) dps += enemyDmg(s, e.type) * d.rate; // a melee enemy this close lands its first hit within half a second
+    if (d.slam && reach(e, d.slam.r)) dps += enemyDmg(s, e.type) / d.slam.every;
+  }
+  return dps;
+}
+
 /** spend: whether this bot may use its team's Scrap (false when a human is on the team). */
 export function botInput(s, i, spend = true) {
   const h = s.heroes[i];
@@ -224,7 +238,11 @@ export function botInput(s, i, spend = true) {
     out.r = squad.some((o) => !o.alive) || squad.filter((o) => o.hp < o.max * 0.4).length >= 2;
   } else if (h.kind === 'forge') {
     out.q = s.structs.some((st) => st.team === h.team && st.type !== 'spikes' && st.hp < st.max * 0.7 && gap(h, st) <= def.q.r);
-    out.r = s.heroes.filter((o) => o.team === h.team && o.alive && o.hp < o.max * 0.5).length >= 2;
+    // Aegis goes up as a wave lands, not after it has done its damage: when six seconds of the AI enemies in reach
+    // would cost the squad AEGIS_WORTH of the health it has left. Against rival heroes it still waits for two teammates to be badly hurt.
+    const squad = s.heroes.filter((o) => o.team === h.team && o.alive);
+    const wave = incoming(s, h.team) * def.r.time >= AEGIS_WORTH * squad.reduce((t, o) => t + o.hp + o.shield, 0);
+    out.r = h.ult >= 100 && (wave || squad.filter((o) => o.hp < o.max * 0.5).length >= 2);
   } else {
     out.q = foeD < 400;
     out.r = s.structs.some((st) => st.team === h.team && st.type !== 'spikes' && st.hp < st.max * 0.5);

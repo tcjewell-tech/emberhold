@@ -53,6 +53,8 @@ Node's built-in runner, no test dependencies. `test/sim.test.js` covers rules, `
 
 `test/balance.test.js` is the balance harness. It plays bot-only matches on worker threads and fails when a hero's damage per minute or deaths per match stray too far from the average of the five, when a team wins far from a third of the matches, or when matches run too short, too long or never end. Under `npm test` it plays 12 fixed-seed matches against wide bounds (`QUICK`); given a match count on the command line it plays that many against tight ones (`FULL`) and prints a per-hero table.
 
+To judge a change to one bot rule, a symmetric run says little, since all three teams get it. Keep a copy of the old `bots.js`, give one team the new `botInput` and the other two the old, and play every seed three times with the new seat rotating; compare that team's wins with a third.
+
 Bot tests mostly build a state by hand (place heroes, set `g.wave`, clear `g.wrecks`) and assert on a single `botInput` result, using the `quiet()` and `heading()` helpers in `test/bots.test.js`.
 
 Nothing automated covers the browser client; check drawing and HUD changes by playing in a browser.

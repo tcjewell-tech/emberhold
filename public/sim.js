@@ -624,6 +624,9 @@ function updateStructs(s, dt) {
 
 // ---------------------------------------------------------------- AI enemies
 
+/** What one hit from an AI enemy of this type does tonight: a tenth more each night after the first. */
+export const enemyDmg = (s, type) => ENEMIES[type].dmg * (1 + 0.1 * Math.max(0, s.wave - 1));
+
 export function spawnEnemy(s, type, team, x, y) {
   const def = ENEMIES[type], hp = def.hp * (1 + 0.25 * Math.max(0, s.wave - 1));
   const e = { id: s.nextId++, type, team, x, y, hp, max: hp, cd: 0, stun: 0 };
@@ -668,7 +671,7 @@ function updateEnemy(s, e, dt) {
     e.team = k;
   }
   const em = s.teams[e.team].ember;
-  const dmg = def.dmg * (1 + 0.1 * Math.max(0, s.wave - 1));
+  const dmg = enemyDmg(s, e.type);
   const emberD = Math.hypot(em.x - e.x, em.y - e.y);
   const strike = (hit) => {
     if (e.cd > 0) return;

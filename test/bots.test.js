@@ -297,7 +297,7 @@ test('the bot base adds Shield Generators after its first Turrets, and their fie
   for (let k = 0; k < S.TEAM_SIZE; k++) assert.ok(gens.some((st) => gap(st, S.post(0, k)) <= S.STRUCTS.shield.radius), `post ${k} is in a field`);
 });
 
-test('the Forge bot goes to a broken structure at its base and Reforges it, and calls Aegis when teammates are badly hurt', () => {
+test('the Forge bot goes to a broken structure at its base and Reforges it', () => {
   const g = quiet();
   g.phase = 'night';
   const em = g.teams[0].ember, forge = place(g.heroes[AMBER + FORGE], em.x - 100, em.y - 200);
@@ -309,6 +309,27 @@ test('the Forge bot goes to a broken structure at its base and Reforges it, and 
   place(forge, wall.x + 60, wall.y);
   input = botInput(g, forge.i);
   assert.ok(input.q && !input.r);
-  for (const k of [ANVIL, DART]) g.heroes[AMBER + k].hp *= 0.4;
-  assert.ok(botInput(g, forge.i).r);
+});
+
+test('the Forge bot keeps Aegis for the moment a wave lands on its squad', () => {
+  const g = quiet();
+  g.phase = 'night';
+  g.wave = 3;
+  const em = g.teams[0].ember, forge = g.heroes[AMBER + FORGE];
+  forge.ult = 100;
+  for (let k = 0; k < 12; k++) S.spawnEnemy(g, 'skitter', 0, em.x + 500, em.y - 120 + k * 20);
+  assert.ok(!botInput(g, forge.i).r, 'the wave is still on its way');
+  g.enemies.slice(0, 2).forEach((e) => place(e, forge.x + 20, forge.y));
+  assert.ok(!botInput(g, forge.i).r, 'two that ran ahead are not the wave');
+  g.enemies.forEach((e, k) => place(e, forge.x + 20, forge.y - 30 + k * 5));
+  assert.ok(botInput(g, forge.i).r, 'the wave is on the squad');
+  forge.ult = 99;
+  assert.ok(!botInput(g, forge.i).r, 'nothing to spend');
+
+  g.enemies = [];
+  forge.ult = 100;
+  g.heroes[AMBER + ANVIL].hp *= 0.4;
+  assert.ok(!botInput(g, forge.i).r, 'one hurt teammate and no wave: it waits');
+  g.heroes[AMBER + DART].hp *= 0.4;
+  assert.ok(botInput(g, forge.i).r, 'two badly hurt teammates, as a raid leaves them: it does not');
 });
