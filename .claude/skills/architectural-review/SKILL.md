@@ -1,0 +1,95 @@
+---
+name: architectural-review
+description: Build one markdown file that hands this codebase to an outside reviewer (Gemini, another AI, a person) for an architectural review - chosen source files in full, each under its own header, led by a written summary of what to review. Use this whenever the user asks for a codebase bundle, a "codebase context" file, an architectural review export, something "for Gemini to review", a markdown dump of source files to share or sync to Google Drive or Obsidian, or an update to emberhold_codebase_context.md, even if they never say "skill" or "bundle". Not for reviewing code yourself.
+---
+
+# Architectural review bundle
+
+The reviewer gets this one file and nothing else: no repository, no history, no chance to ask what you meant. So the bundle has two jobs. It must carry the source exactly, and it must tell the reviewer where to look and why. A script does the first job; the second is yours.
+
+## 1. Settle what goes in
+
+Take these from the request; fall back to the defaults only for what the user left out.
+
+- **Files.** The ones the user names. If they name none, read `CLAUDE.md` (or the README) and pick the files that hold the architecture, not every file. "Any modified test files" means the tests changed by the commits under review: find them with `git show --stat <commit>`.
+- **Focus.** What the review is about: a new feature, a fork, a refactor, or the whole design. If the user did not say, the focus is the work since the last bundle.
+- **Output name.** The one the user gives, else `<project>_codebase_context.md` in the project root, overwriting the last one.
+
+Before overwriting an old bundle, read its first lines. Its header records the commit it was built from, and `git log <that commit>..HEAD` is the list of what changed since, which the summary should mention.
+
+## 2. Understand the focus before writing about it
+
+Read the commits (`git log`, `git show <commit>`) and the code they touch. A summary written from the commit message alone repeats what the reviewer could have guessed; one written from the code can say which line decides the outcome.
+
+Measure where it is cheap. If the project can run the thing headlessly (here: bot-only matches, see "Balance changes" in `CLAUDE.md`), run it and put the numbers in. Numbers let the reviewer judge the design by its effect, and they often show the most interesting question.
+
+## 3. Write the summary
+
+Write it to a scratch file (not in the project). Use this shape, dropping a section only if it would be empty:
+
+```markdown
+One paragraph: what the project is, for someone who has never seen it.
+
+**What to review:** the focus, in a sentence, with its commit.
+
+## <Focus>: what it is
+Plain words. What changes for a player or user.
+
+## <Focus>: implementation
+One numbered part per concern (state, rules, client, tests...). Quote the lines
+that matter in code blocks, and say which file and function they are in.
+
+### Measured
+A small table, with how it was measured.
+
+### Questions worth a reviewer's attention
+Numbered. Real doubts about the design, each concrete enough to answer.
+
+## Other changes since the previous bundle
+`git log` one-liners, newest first, then two sentences that sum them up.
+
+## Not included
+Which files were left out, so the reviewer knows what they cannot see.
+```
+
+If a file matters to the focus but the user did not ask for it in full, show its part as a diff (`git show <commit> -- <path>`) inside the summary.
+
+Every code quote must be real. After writing, grep each quoted line in the source. A reviewer who finds one invented line stops trusting the rest.
+
+## 4. Build the bundle
+
+Write a manifest next to the summary and run the script from the project root:
+
+```json
+{
+  "out": "emberhold_codebase_context.md",
+  "title": "Emberhold: codebase context for architectural review",
+  "summary": "<path to the summary file>",
+  "files": [
+    { "path": "CLAUDE.md", "role": "Project guide: commands, architecture, known limits" },
+    { "path": "public/sim.js", "role": "Every game rule" }
+  ]
+}
+```
+
+```bash
+node .claude/skills/architectural-review/scripts/bundle.mjs <path to manifest.json>
+```
+
+The script adds the title, the date, branch and commit, a table of the files with line counts and roles, then each file whole under `## File: <path>`. It reads every file back out of the bundle and compares it with the source, and prints one line ending "every file identical to its source". If it exits with an error, fix the cause; do not hand-edit the bundle. It refuses files that exist to hold secrets (`.env`, key files). Look through anything else you bundle for tokens or passwords yourself, because this file is going to an outside service.
+
+Give each file a `role` of a few words: the reviewer reads that table first.
+
+## 5. Deliver
+
+- Say where the file is, how large, which commit it is from, and what is not in it.
+- If the user is working remotely and a tool for sending files exists, send the file too.
+- Leave it out of git. It is a copy of code the repository already has, and committing it would put a stale duplicate of every file in the history.
+
+## Google Drive (only if the user asks)
+
+Uploading is the user's call each time, because it puts the code on an outside service.
+
+- Upload as plain markdown, not converted to a Google Doc, so Gemini and Obsidian read it as written.
+- The Drive connector can rename a file but cannot replace its contents. To update an earlier copy: upload the new one, check its size matches the local file, then move the old copy to the trash, and tell the user the link has changed.
+- Do not share the file with anyone.

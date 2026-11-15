@@ -65,6 +65,8 @@ Bot tests mostly build a state by hand (place heroes, set `g.wave`, clear `g.wre
 
 Nothing automated covers the browser client; check drawing and HUD changes by playing in a browser.
 
+`.claude/skills/architectural-review/` is a skill that builds one markdown file of chosen source files plus a written summary, for an outside reviewer; its script, `scripts/bundle.mjs`, is covered by `test/bundle.test.js`. The bundles it writes in the project root are left out of git.
+
 ## Balance changes
 
 Hero, structure and enemy numbers are the tables at the top of `sim.js` (`HEROES`, `STRUCTS`, `ENEMIES`). Judge a balance or bot-behaviour change with the harness: run `node test/balance.test.js 60 1001` before and after (the same first seed plays the same matches) and compare the tables, then `npm run balance` for a fresh random sample. Change a bound in `FULL` or `QUICK` only on purpose, and say why in the commit.
