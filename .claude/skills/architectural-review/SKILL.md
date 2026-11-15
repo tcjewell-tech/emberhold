@@ -86,12 +86,16 @@ Give each file a `role` of a few words: the reviewer reads that table first.
 
 - Say where the file is, how large, which commit it is from, and what is not in it.
 - If you have a tool for sending files to the user, send the file too, unless the request said not to. They may be away from the computer the file is on.
+- Upload it to the user's Google Drive (next section), unless the request said not to upload.
 - Leave it out of git. It is a copy of code the repository already has, and committing it would put a stale duplicate of every file in the history.
 
-## Google Drive (only if the user asks)
+## Google Drive
 
-Uploading is the user's call each time, because it puts the code on an outside service.
+Every finished bundle goes to the user's Google Drive, because that is where Gemini reads it. Tom asked for this as a standing step on 2026-11-15, so do not ask first. Skip it only when the request says not to upload, and say that you skipped it. A rebuilt bundle is uploaded again.
 
-- Upload as plain markdown, not converted to a Google Doc, so Gemini and Obsidian read it as written.
-- The Drive connector can rename a file but cannot replace its contents. To update an earlier copy: upload the new one, check its size matches the local file, then move the old copy to the trash, and tell the user the link has changed.
+- Put it in the Drive folder "Emberhold review" (find it by title; create it in My Drive if it is gone).
+- Upload as plain markdown (`text/markdown`), not converted to a Google Doc, so Gemini and Obsidian read it as written. With the Drive connector that is `create_file` with `disableConversionToGoogleType: true`, the file passed as a file reference (`sha256:<hash>:<absolute path>`), not pasted as text.
+- Check that the size Drive reports equals the local file's size in bytes.
+- The Drive connector can rename a file but cannot replace its contents. If a copy with the same name is already there: upload the new one, check its size, then move the old copy to the trash, and tell the user the link has changed.
 - Do not share the file with anyone.
+- Give the user the link. If no Drive tool is connected, say so plainly; the bundle is still done.
