@@ -515,9 +515,10 @@ const touch = createTouch(canvas, {
   },
 });
 if (matchMedia('(pointer: coarse)').matches) document.body.classList.add('touch');
-$('q').onclick = () => sendInput({ q: true });
-$('r').onclick = () => sendInput({ r: true });
-$('rm').onclick = () => $('rm').classList.toggle('on', (removing = !removing));
+// These answer the press itself, not a click: a phone makes no click from a second finger while a thumb is steering.
+$('q').onpointerdown = () => sendInput({ q: true });
+$('r').onpointerdown = () => sendInput({ r: true });
+$('rm').onpointerdown = () => $('rm').classList.toggle('on', (removing = !removing));
 for (const b of $('build').querySelectorAll('button[data-type]')) {
   b.onclick = () => setBuild(buildType === b.dataset.type ? null : b.dataset.type);
   b.addEventListener('touchstart', (e) => {
@@ -550,7 +551,7 @@ const drop = (e) => {
 };
 addEventListener('touchend', drop);
 addEventListener('touchcancel', drop);
-$('auto').onclick = () => {
+$('auto').onpointerdown = () => {
   if (!latest || slot < 0) return;
   const h = latest.heroes[slot], piece = h.alive ? nextPiece(latest, h) : null;
   if (!h.alive) say('You are down');
