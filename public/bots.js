@@ -160,6 +160,8 @@ export function botInput(s, i, spend = true) {
   // A Forge defending home goes to the most broken Wall, Turret or Shield Generator near its Ember, to Reforge it.
   const broken = h.kind === 'forge' && !hurt && defend
     ? s.structs.filter((st) => st.team === h.team && st.type !== 'spikes' && st.hp < st.max * 0.7 && gap(st, em) < LEASH).sort((a, c) => a.hp / a.max - c.hp / c.max)[0] : null;
+  // A Forge out on its own is slow and no match for raiders: with a rival hero in sight and no teammate beside it, it goes home.
+  const outmatched = h.kind === 'forge' && !defend && !mates.some((o) => gap(h, o) < 300) && s.heroes.some((o) => o.alive && o.team !== h.team && gap(h, o) < SIGHT);
   if (patient || broken) {
     goal = patient || broken; // a medic's first job is to get Mend in reach of whoever needs it most; a Forge's, Reforge
     stopAt = def.q.r * 0.6;
@@ -167,6 +169,8 @@ export function botInput(s, i, spend = true) {
   } else if (hurt && defend && medic) {
     goal = medic; // badly hurt in a fight: fall back to the medic rather than trade shots
     stopAt = HEROES.patch.q.r * 0.6;
+  } else if (outmatched) {
+    fixed = true; // straight home to its post, shooting back but not stopping to duel
   } else if (roam) {
     const piece = spend && h.kind === 'cog' ? nextPiece(s, h) : null;
     // The Dart leads the raid. An Anvil goes only as its bodyguard: alone it is too slow to get back out.

@@ -17,10 +17,10 @@ import { botInput } from '../public/bots.js';
 // deaths: the same for deaths per match, as [least, most] times the average.
 // minutes: the average match length allowed. seats: how many standard deviations a team's wins may sit from a third.
 // Where the game stood when these were set (three runs of 60): damage within 10% of the average for every hero;
-// deaths about 1.5 times the average for Forge, about average for Anvil and Cog, and 0.6 to 0.8 for Dart and Patch.
+// deaths 0.8 to 1.4 times the average for every hero, Cog the most and Dart the least.
 // Twelve matches pin damage down just as well but leave deaths about a quarter of the average either way, hence QUICK's width.
-const FULL = { dmg: 0.2, deaths: [0.33, 1.8], minutes: [8, 15], seats: 3 };
-const QUICK = { matches: 12, firstSeed: 1, dmg: 0.3, deaths: [0.25, 2.2], minutes: [7, 16], seats: 3 };
+const FULL = { dmg: 0.2, deaths: [0.5, 1.6], minutes: [8, 15], seats: 3 };
+const QUICK = { matches: 12, firstSeed: 1, dmg: 0.3, deaths: [0.33, 2], minutes: [7, 16], seats: 3 };
 
 const LIMIT = 3600; // seconds of match time after which a match counts as unfinished
 

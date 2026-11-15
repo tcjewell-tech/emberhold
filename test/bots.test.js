@@ -343,3 +343,14 @@ test('a hurt Anvil bot Fortifies under fire from range, not only with a foe at a
   place(g.heroes[AZURE + DART], MID.x + 900, MID.y);
   assert.equal(botInput(g, anvil.i).r, false, 'nobody in sight: nothing to Fortify against');
 });
+
+test('a Forge bot out on its own goes home when a rival hero comes in sight, but stands and fights with a teammate beside it', () => {
+  const g = quiet(), forge = place(g.heroes[AMBER + FORGE], MID.x, MID.y), home = S.post(0, FORGE);
+  const away = gap(forge, home), rival = g.heroes[AZURE + DART];
+  place(rival, forge.x + ((forge.x - home.x) / away) * 400, forge.y + ((forge.y - home.y) / away) * 400); // on the far side from home
+  let input = botInput(g, forge.i);
+  assert.ok(heading(input, forge, home) > 0.9, 'alone: straight home');
+  assert.equal(input.fire, true, 'shooting back as it goes');
+  place(g.heroes[AMBER + COG], forge.x + 50, forge.y + 50);
+  assert.ok(heading(botInput(g, forge.i), forge, rival) > 0.9, 'with company: it closes to firing range instead');
+});
