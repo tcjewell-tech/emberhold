@@ -54,6 +54,7 @@ const WRECKS_PER_TEAM = 6; // per day, plus three shared ones mid-map
 const WALL_COST = 30; // flow-field price of chewing through a blocking structure, in cells of detour
 const ULT_PER_DMG = 0.25;
 const ULT_PER_HEAL = 0.4;
+const ENDLESS_PACE = 0.5; // endless mode: how much of a normal night's step up in difficulty each night brings
 
 export const HERO_IDS = ['anvil', 'dart', 'patch', 'cog', 'forge'];
 export const TEAM_SIZE = HERO_IDS.length;
@@ -138,6 +139,7 @@ export function createGame(seed = 1) {
   const s = {
     // mood: which of the three colour moods the match wears. s.seed cannot say: it moves on with every random number.
     t: 0, seed: seed | 0, mood: Math.abs(seed | 0) % 3, phase: 'day', wave: 0, timer: DAY_LENGTH, winner: null, nextId: 1, sv: 0,
+    endless: false, // endless mode: the match goes on until every Ember has fallen, and whoever fell last wins
     teams: TEAMS.map((T) => ({ scrap: START_SCRAP, alive: true, overclock: 0, aegis: 0, ember: { x: T.x, y: T.y, hp: EMBER_HP, max: EMBER_HP } })),
     heroes: [], enemies: [], shots: [], structs: [], wrecks: [], pickups: [], fx: [], spawn: [],
   };
@@ -624,11 +626,14 @@ function updateStructs(s, dt) {
 
 // ---------------------------------------------------------------- AI enemies
 
-/** What one hit from an AI enemy of this type does tonight: a tenth more each night after the first. */
-export const enemyDmg = (s, type) => ENEMIES[type].dmg * (1 + 0.1 * Math.max(0, s.wave - 1));
+/** How hard tonight is: the night's number, or in endless mode ENDLESS_PACE of the way from night to night, so it climbs slowly. */
+const level = (s) => (s.endless ? 1 + (s.wave - 1) * ENDLESS_PACE : s.wave);
+
+/** What one hit from an AI enemy of this type does tonight: a tenth more each level after the first. */
+export const enemyDmg = (s, type) => ENEMIES[type].dmg * (1 + 0.1 * Math.max(0, level(s) - 1));
 
 export function spawnEnemy(s, type, team, x, y) {
-  const def = ENEMIES[type], hp = def.hp * (1 + 0.25 * Math.max(0, s.wave - 1));
+  const def = ENEMIES[type], hp = def.hp * (1 + 0.25 * Math.max(0, level(s) - 1));
   const e = { id: s.nextId++, type, team, x, y, hp, max: hp, cd: 0, stun: 0 };
   keepIn(e, ENEMIES[type].r + 4); // a spawn point out over the water comes ashore at the edge
   if (def.slam) e.slam = def.slam.every;
@@ -798,15 +803,15 @@ function spawnWrecks(s) {
   FACING.forEach((f) => s.wrecks.push({ id: s.nextId++, x: CENTRE.x - Math.cos(f) * 120, y: CENTRE.y - Math.sin(f) * 120, scrap: 40 }));
 }
 
-function pack(wave) {
+function pack(wave, boss) {
   const list = [];
   const add = (type, n) => {
     for (let k = 0; k < n; k++) list.push(type);
   };
-  add('skitter', 6 + 4 * wave);
-  add('spitter', Math.max(0, 3 * (wave - 1)));
-  add('breaker', Math.max(0, 2 * (wave - 2)));
-  add('colossus', wave % 5 === 0 ? 1 : 0);
+  add('skitter', Math.round(6 + 4 * wave)); // wave may be a fraction in endless mode
+  add('spitter', Math.round(Math.max(0, 3 * (wave - 1))));
+  add('breaker', Math.round(Math.max(0, 2 * (wave - 2))));
+  add('colossus', boss ? 1 : 0);
   return list;
 }
 
@@ -814,7 +819,7 @@ export function startNight(s) {
   s.phase = 'night';
   s.wave++;
   s.timer = 0;
-  const list = pack(s.wave), gap = Math.min(0.45, 16 / list.length);
+  const list = pack(level(s), s.wave % 5 === 0), gap = Math.min(0.45, 16 / list.length);
   list.forEach((type, k) => {
     s.teams.forEach((T, team) => T.alive && s.spawn.push({ type, team, at: s.t + 1 + k * gap }));
   });
@@ -869,11 +874,13 @@ export function step(s, inputs, dt = 1 / 60) {
   if (s.phase === 'night' && !s.spawn.length && !s.enemies.length) startDay(s);
 
   // Decided once per step, so two Embers falling in the same step is a draw, not a win.
+  const standing = () => s.teams.flatMap((T, k) => (T.alive ? [k] : []));
+  const before = standing();
   s.teams.forEach((T, k) => T.alive && T.ember.hp <= 0 && eliminate(s, k));
-  const living = s.teams.flatMap((T, k) => (T.alive ? [k] : []));
-  if (living.length <= 1) {
+  const living = standing();
+  if (living.length <= (s.endless ? 0 : 1)) {
     s.phase = 'over';
-    s.winner = living.length ? living[0] : -1;
+    s.winner = living.length ? living[0] : s.endless && before.length === 1 ? before[0] : -1; // endless: the last to fall
   }
   return s;
 }

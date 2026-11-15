@@ -48,6 +48,13 @@ npm start -- --lag=150 --jitter=40
 
 `--lag` is the round trip in milliseconds; `--jitter` adds up to that many more each way.
 
+## Endless mode
+
+Tick **Endless mode** on the hero select screen before you start a match. The match then does
+not stop when one Ember is left: the nights keep coming until every Ember has fallen, and the
+team that fell last held out longest. Each night is harder than the one before, but the climb
+is half as steep as in a normal match. The first player in picks the mode; Play again keeps it.
+
 ## Power-ups
 
 AI enemies sometimes drop a glowing gem that lasts 20 seconds. Any hero can grab one by

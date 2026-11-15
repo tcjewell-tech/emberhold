@@ -114,6 +114,8 @@ const who = (i) => (i === slot ? 'You' : humans[i] ? 'Player' : 'Bot');
 // ---------------------------------------------------------------- screens
 
 function renderSelect() {
+  $('endless').disabled = lobby.running; // the mode is whatever the match in progress was started with
+  if (lobby.running) $('endless').checked = lobby.endless;
   $('teams').replaceChildren(
     ...TEAMS.map((T, team) => {
       const col = el('div', 'team');
@@ -131,7 +133,7 @@ function renderSelect() {
           return row;
         };
         card.append(heroSprite(kind, team), head, el('small', '', `${d.role} · ${d.gun.name} · ${d.hp} health`), line(`Q ${d.q.name}:`, d.q.text), line(`R ${d.r.name}:`, d.r.text), line('Passive:', d.passive));
-        card.onclick = () => send({ t: 'join', slot: i, key });
+        card.onclick = () => send({ t: 'join', slot: i, key, endless: $('endless').checked });
         col.append(card);
       });
       return col;
@@ -266,9 +268,12 @@ function onState(s) {
     if (!T.alive && seen.alive[k]) say(k === team ? 'Your Ember is lost. WASD moves the camera.' : `Team ${TEAMS[k].name} has fallen`);
     seen.alive[k] = T.alive;
   });
+  const left = s.teams.filter((T) => T.alive).length;
+  if (s.endless && left === 1 && seen.left > 1 && s.teams[team].alive) say('Yours is the last Ember. Hold out as long as you can.');
+  seen.left = left;
   if (s.phase === 'over' && seen.phase !== 'over') {
-    $('result').textContent = s.winner < 0 ? 'No Ember survives' : `Team ${TEAMS[s.winner].name} wins`;
-    $('resultSub').textContent = s.winner === team ? 'Your Ember holds' : 'Your Ember is lost';
+    $('result').textContent = s.winner < 0 ? 'No Ember survives' : `Team ${TEAMS[s.winner].name} ${s.endless ? 'held out longest' : 'wins'}`;
+    $('resultSub').textContent = s.endless ? `Endless mode: the last Ember fell after ${s.wave} ${s.wave === 1 ? 'night' : 'nights'}` : s.winner === team ? 'Your Ember holds' : 'Your Ember is lost';
     $('endScores').replaceChildren(scoreTable(s));
     setBuild(null);
   }

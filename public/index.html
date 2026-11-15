@@ -95,6 +95,8 @@
   .card small b { color: var(--text); font-weight: 700; }
   #controls { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--dim); }
   #note { color: var(--bad); min-height: 1.4em; }
+  #endlessRow { display: block; margin: 0 0 12px; cursor: pointer; }
+  #endlessRow input { width: 18px; height: 18px; vertical-align: -3px; margin-right: 6px; accent-color: var(--gold); }
   #tip { color: var(--dim); font: 400 var(--s)/1.5 var(--plain); }
 
   table { border-collapse: collapse; width: 100%; }
@@ -185,6 +187,7 @@
     <h1>Emberhold</h1>
     <h2>Choose your team and hero</h2>
     <p id="tip">Three teams each guard an Ember. AI enemies attack every night; rival heroes can attack any time. The last Ember standing wins. Bots play every hero nobody picks, and a bot teammate builds from your team's shared Scrap too.</p>
+    <label id="endlessRow"><input type="checkbox" id="endless"> Endless mode: play on until every Ember has fallen. Each night is harder than the last.</label>
     <div id="teams"></div>
     <p id="note"></p>
     <p id="touchtip" class="touchonly">Drag anywhere to move. Your hero aims, fires and scavenges wrecks by itself. Tap Q and R for your ability and ultimate. To build, drag Wall, Turret, Spikes or Shield onto the ground.</p>

@@ -782,3 +782,38 @@ test('shotHit names what a shot has run into: a rival Wall but not its own team\
   assert.equal(S.shotHit(g, shot(1, rival.x, rival.y)), null, 'no friendly fire');
   assert.equal(S.shotHit(g, shot(0, g.teams[2].ember.x, g.teams[2].ember.y)).ember, 2);
 });
+
+test('endless mode plays on with one Ember left, and ends when it falls with the last to fall as winner', () => {
+  const g = arena();
+  g.endless = true;
+  g.teams[0].ember.hp = 0;
+  g.teams[2].ember.hp = 0;
+  run(g, DT);
+  assert.equal(g.phase, 'day', 'one Ember left: not over');
+  S.startNight(g);
+  assert.ok(g.spawn.every((sp) => sp.team === 1) && g.spawn.length > 0, 'the nights keep coming, for the team that is left');
+  g.teams[1].ember.hp = 0;
+  run(g, DT);
+  assert.equal(g.phase, 'over');
+  assert.equal(g.winner, 1);
+
+  const draw = arena();
+  draw.endless = true;
+  for (const T of draw.teams) T.ember.hp = 0;
+  run(draw, DT);
+  assert.equal(draw.phase, 'over');
+  assert.equal(draw.winner, -1, 'all falling together is a draw');
+});
+
+test('endless mode climbs in difficulty at a gentler pace, night for night', () => {
+  const night5 = (endless) => {
+    const g = arena();
+    g.endless = endless;
+    g.wave = 4;
+    S.startNight(g);
+    return { pack: g.spawn.length, hp: S.spawnEnemy(g, 'skitter', 0, 1500, 1500).max, dmg: S.enemyDmg(g, 'skitter') };
+  };
+  const normal = night5(false), endless = night5(true), first = S.ENEMIES.skitter;
+  assert.ok(endless.pack < normal.pack && endless.hp < normal.hp && endless.dmg < normal.dmg, 'easier than a normal fifth night');
+  assert.ok(endless.hp > first.hp && endless.dmg > first.dmg, 'but harder than the first');
+});

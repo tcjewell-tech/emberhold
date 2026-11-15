@@ -80,11 +80,11 @@ export async function startServer({
     });
   });
   const send = (ws, msg) => post(ws, JSON.stringify(msg));
-  const lobby = () => ({ t: 'lobby', humans: humans(), running: game !== null, out: game ? game.teams.map((T) => !T.alive) : [false, false, false] });
+  const lobby = () => ({ t: 'lobby', humans: humans(), running: game !== null, endless: game !== null && game.endless, out: game && game.phase !== 'over' ? game.teams.map((T) => !T.alive) : [false, false, false] }); // a finished match can be joined on any team, to play again
   const tellAll = () => wss.clients.forEach((ws) => send(ws, lobby()));
 
   /** key: a secret the client made up. Showing it again takes the seat back from a connection that died unnoticed. */
-  function join_(ws, slot, key) {
+  function join_(ws, slot, key, endless) {
     const deny = (why) => send(ws, { t: 'denied', why });
     if (!Number.isInteger(slot) || slot < 0 || slot >= SLOTS) return deny('bad');
     if (ws.slot >= 0) return deny('seated');
@@ -97,7 +97,7 @@ export async function startServer({
       old.ws.terminate();
     }
     clearTimeout(idle);
-    game ??= newGame(seed++);
+    game ??= Object.assign(newGame(seed++), { endless: endless === true }); // whoever starts the match picks its mode
     ws.slot = slot;
     seats.set(slot, { ws, key, held: {}, q: false, r: false, seq: 0, orders: [] });
     send(ws, { t: 'joined', slot });
@@ -121,11 +121,11 @@ export async function startServer({
         return;
       }
       if (!m || typeof m !== 'object') return;
-      if (m.t === 'join') join_(ws, m.slot, m.key);
+      if (m.t === 'join') join_(ws, m.slot, m.key, m.endless);
       else if (ws.slot < 0) return;
       else if (m.t === 'input') readInput(m, seats.get(ws.slot));
       else if (m.t === 'restart' && game.phase === 'over') {
-        game = newGame(seed++);
+        game = Object.assign(newGame(seed++), { endless: game.endless }); // the same mode again
         tellAll();
       }
     }));

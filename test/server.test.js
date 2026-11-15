@@ -318,3 +318,23 @@ test('the simulated-lag option holds messages back each way and keeps their orde
   assert.deepEqual(ticks, [...ticks].sort((x, y) => x - y));
   await a.close();
 });
+
+test('whoever starts the match picks endless mode, and it survives Play again', async (t) => {
+  const { port } = await withServer(t, { newGame: (seed) => { const g = createGame(seed); for (const T of g.teams) T.ember.hp = 0; return g; } });
+  const a = await connect(port);
+  await a.first(isLobby, 'the lobby');
+  a.send({ t: 'join', slot: 0, key: 'k', endless: true });
+  const over = await a.next((m) => m.t === 'state' && m.s.phase === 'over', 'the match to end');
+  assert.equal(over.s.endless, true);
+  assert.equal((await a.first((m) => isLobby(m) && m.running, 'the lobby')).endless, true);
+  a.send({ t: 'restart' });
+  assert.equal((await a.next((m) => m.t === 'state' && m.s.t < over.s.t + 1 && m.s !== over.s && m.n > over.n, 'a fresh match')).s.endless, true);
+  await a.close();
+
+  const other = await withServer(t);
+  const b = await connect(other.port);
+  await b.first(isLobby, 'the lobby');
+  b.send({ t: 'join', slot: 0, key: 'k', endless: 'yes' });
+  assert.equal((await b.next(isState, 'a state')).s.endless, false, 'only a plain true turns it on');
+  await b.close();
+});
