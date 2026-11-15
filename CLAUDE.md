@@ -65,7 +65,7 @@ Bot tests mostly build a state by hand (place heroes, set `g.wave`, clear `g.wre
 
 Nothing automated runs the browser client (`test/client.test.js` only checks its files against each other, such as a build button for every structure); check drawing and HUD changes by playing in a browser.
 
-`.claude/skills/architectural-review/` is a skill that builds one markdown file of chosen source files plus a written summary, for an outside reviewer; its script, `scripts/bundle.mjs`, is covered by `test/bundle.test.js`. The bundles it writes in the project root are not committed (they show as untracked).
+The `architectural-review` skill builds one markdown file of chosen source files plus a written summary, for an outside reviewer. It is not in this repository: it lives in the user's own skills folder (`~/.claude/skills/architectural-review/`, with its script and that script's tests) so that every project can use it. The bundles it writes in the project root (`emberhold_codebase_context.md` by default) are not committed (they show as untracked).
 
 ## Balance changes
 
