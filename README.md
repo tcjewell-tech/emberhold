@@ -96,5 +96,5 @@ beside the lineup's average, failing if a hero strays too far from it.
 `public/net.js` keeps the picture smooth and your own hero responsive over a slow connection;
 `public/art.js` draws the pixel art and `public/sound.js` makes the sound effects, both in code
 with no image or audio files. Each match wears one of three colour moods (Frostfall, Thaw, Dusk).
-Big moments (an Ember falling, a Colossus going down) throw sparks and shake the screen; your
-system's reduce-motion setting keeps the camera still.
+Big moments (an Ember falling, a Colossus going down) throw sparks and shake the screen. Settings has
+"Screen shake: off" to keep the camera still; it starts off if your system asks for reduced motion.

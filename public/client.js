@@ -45,7 +45,7 @@ const BOOM = {
   down: { n: 12, speed: 160, life: 0.6, jolt: 0, size: 2, spread: 0, lift: 14, up: 30, cols: ['#ff6b6b', '#ffffff'] },
   aegis: { n: 14, speed: 30, life: 0.9, jolt: 1.5, size: 2, spread: 44, lift: 20, up: 90, cols: ['#bfe9ff', '#ffffff'] }, // motes shed by the ring Aegis draws round a hero
 };
-const sparks = [], calm = matchMedia('(prefers-reduced-motion: reduce)'); // reduced motion: sparks, but a still camera
+const sparks = [];
 let shake = 0;
 
 // ---------------------------------------------------------------- connection
@@ -202,7 +202,7 @@ function boom(kind, o, extra = [], least = 0) {
     });
   }
   if (sparks.length > 400) sparks.splice(0, sparks.length - 400);
-  if (!calm.matches) shake = Math.max(shake, B.jolt * Math.max(least, near(o)));
+  if (prefs.shake) shake = Math.max(shake, B.jolt * Math.max(least, near(o)));
 }
 /** The picture runs a little behind the news (see the timeline), so a boom waits that long and goes off when it is seen to happen. */
 const later = (fn) => setTimeout(fn, Math.max(0, snaps.at(-1).at - timeline.at(performance.now())));
@@ -466,7 +466,7 @@ canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 //   drag: drag from Wall, Turret or Spikes onto the ground; a ghost follows the thumb and it is placed on release.
 //   auto: one Auto-build button places the next piece of the base layout the bot Cog builds.
 let removing = false, dragging = null;
-const prefs = { build: 'drag' };
+const prefs = { build: 'drag', shake: !matchMedia('(prefers-reduced-motion: reduce)').matches }; // shake starts off for anyone whose system asks for less motion
 try { Object.assign(prefs, JSON.parse(localStorage.getItem('emberhold-prefs') || '{}')); } catch { /* defaults */ }
 const touch = createTouch(canvas, {
   building: () => buildType !== null && !dragging,
@@ -524,15 +524,24 @@ $('auto').onclick = () => {
 function showSettings() {
   for (const b of $('settings').querySelectorAll('[data-build]')) b.classList.toggle('on', b.dataset.build === prefs.build);
   $('soundSet').textContent = sound.muted() ? 'Sound: off' : 'Sound: on';
+  $('shakeSet').textContent = prefs.shake ? 'Screen shake: on' : 'Screen shake: off';
   document.body.classList.toggle('autobuild', prefs.build === 'auto');
 }
 $('gear').onclick = () => { $('settings').hidden = !$('settings').hidden; showSettings(); };
 $('settingsDone').onclick = () => ($('settings').hidden = true);
 $('soundSet').onclick = () => { sound.toggle(); showSettings(); };
-for (const b of $('settings').querySelectorAll('[data-build]')) b.onclick = () => {
-  prefs.build = b.dataset.build;
+const keep = () => {
   try { localStorage.setItem('emberhold-prefs', JSON.stringify(prefs)); } catch { /* not remembered */ }
   showSettings();
+};
+$('shakeSet').onclick = () => {
+  prefs.shake = !prefs.shake;
+  shake = 0; // stop one that is under way
+  keep();
+};
+for (const b of $('settings').querySelectorAll('[data-build]')) b.onclick = () => {
+  prefs.build = b.dataset.build;
+  keep();
 };
 showSettings();
 $('again').onclick = () => send({ t: 'restart' });
