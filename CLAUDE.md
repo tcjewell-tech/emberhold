@@ -63,9 +63,9 @@ To judge a change to one bot rule, a symmetric run says little, since all three 
 
 Bot tests mostly build a state by hand (place heroes, set `g.wave`, clear `g.wrecks`) and assert on a single `botInput` result, using the `quiet()` and `heading()` helpers in `test/bots.test.js`.
 
-Nothing automated covers the browser client; check drawing and HUD changes by playing in a browser.
+Nothing automated runs the browser client (`test/client.test.js` only checks its files against each other, such as a build button for every structure); check drawing and HUD changes by playing in a browser.
 
-`.claude/skills/architectural-review/` is a skill that builds one markdown file of chosen source files plus a written summary, for an outside reviewer; its script, `scripts/bundle.mjs`, is covered by `test/bundle.test.js`. The bundles it writes in the project root are left out of git.
+`.claude/skills/architectural-review/` is a skill that builds one markdown file of chosen source files plus a written summary, for an outside reviewer; its script, `scripts/bundle.mjs`, is covered by `test/bundle.test.js`. The bundles it writes in the project root are not committed (they show as untracked).
 
 ## Balance changes
 

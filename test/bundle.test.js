@@ -35,6 +35,19 @@ test('the bundle holds the summary and every file whole, under its own header', 
   assert.ok(r.out.includes('nested\n````\n`````\n'));
 });
 
+test('code quoted in the summary is looked up in the bundled files, and in others named as quoted', (t) => {
+  const summary = '## Part\n\n```js\nexport const a = 1;\n// ...\nconst invented = true;\nstart(server);\n```\n\n```bash\nnpm test\n```\n';
+  const sources = { 'a.js': 'export const a = 1;\n', 'server.js': 'function go() {\n  start(server);\n}\n', 'summary.md': summary };
+  const base = { out: 'ctx.md', title: 'T', summary: 'summary.md', files: [{ path: 'a.js' }] };
+  const one = bundle(t, sources, base);
+  assert.equal(one.status, 0, 'a quote it cannot find is reported, not fatal');
+  assert.match(one.stdout, /quotes: 2 of 3 quoted lines are not in the bundled or quoted files:\n {2}const invented = true;\n {2}start\(server\);/);
+  const two = bundle(t, sources, { ...base, quoted: ['server.js'] });
+  assert.match(two.stdout, /quotes: 1 of 3 .*:\n {2}const invented = true;\n(?! {2})/, 'the line from server.js is now found; shell commands are never checked');
+  const clean = bundle(t, { ...sources, 'summary.md': '```js\nexport const a = 1;\n```\n' }, base);
+  assert.match(clean.stdout, /quotes: all 1 quoted lines found in the source/);
+});
+
 test('it refuses a file of secrets, a missing file and a manifest with nothing in it', (t) => {
   const base = { out: 'ctx.md', title: 'T', summary: 'summary.md' };
   const secret = bundle(t, { '.env': 'KEY=1', 'summary.md': 's' }, { ...base, files: [{ path: '.env' }] });

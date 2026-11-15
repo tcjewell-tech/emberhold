@@ -1,8 +1,9 @@
 // Builds one markdown file from a written summary and a list of source files, for an outside reviewer.
 //   node bundle.mjs <manifest.json>
-// manifest: { "out": "name.md", "title": "...", "summary": "summary.md", "files": [{ "path": "src/a.js", "role": "what it is" }] }
-// out and files are relative to the current directory (the repository root); summary may be anywhere.
+// manifest: { "out": "name.md", "title": "...", "summary": "summary.md", "files": [{ "path": "src/a.js", "role": "what it is" }], "quoted": ["other.js"] }
+// out, files and quoted are relative to the current directory (the repository root); summary may be anywhere.
 // Every file is embedded whole, then read back out of the bundle and compared with its source.
+// Code quoted in the summary is looked up, line by line, in the bundled files and in the optional quoted ones.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { basename, extname } from 'node:path';
@@ -68,4 +69,20 @@ const written = read(m.out);
 for (const f of files) {
   if (!written.includes(`## File: \`${f.path}\`\n\n${f.block}\n`) || read(f.path).replace(/\n+$/, '') !== f.text) fail(`${f.path} in ${m.out} does not match its source`);
 }
+// Quotes in the summary: a line in a code block of a source language should be a line of some source we were given.
+const sources = [...files, ...(m.quoted ?? []).map((path) => ({ path, text: read(path) }))];
+const langs = new Set(sources.map((f) => LANG[extname(f.path).toLowerCase()]).filter((l) => l && l !== 'markdown' && l !== 'json'));
+const known = new Set(sources.flatMap((f) => f.text.split('\n').map((l) => l.trim())));
+let checked = 0;
+const unknown = [];
+for (const [, lang, body] of read(m.summary).matchAll(/^```(\w+)\n([\s\S]*?)^```$/gm)) {
+  if (!langs.has(lang)) continue;
+  for (const line of body.split('\n').map((l) => l.trim())) {
+    if (line.length < 4 || /^(\/\/|#)?\s*(\.\.\.|…)/.test(line)) continue; // braces, and elisions such as "// ..."
+    checked++;
+    if (!known.has(line)) unknown.push(line);
+  }
+}
+if (unknown.length) console.log(`quotes: ${unknown.length} of ${checked} quoted lines are not in the bundled or quoted files:\n${unknown.map((l) => `  ${l}`).join('\n')}`);
+else if (checked) console.log(`quotes: all ${checked} quoted lines found in the source`);
 console.log(`${m.out}: ${files.length} files, ${written.split('\n').length} lines, ${Buffer.byteLength(written)} bytes, every file identical to its source${commit ? `, at commit ${commit}` : ''}`);

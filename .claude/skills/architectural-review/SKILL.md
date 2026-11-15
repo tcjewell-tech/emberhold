@@ -15,13 +15,13 @@ Take these from the request; fall back to the defaults only for what the user le
 - **Focus.** What the review is about: a new feature, a fork, a refactor, or the whole design. If the user did not say, the focus is the work since the last bundle.
 - **Output name.** The one the user gives, else `<project>_codebase_context.md` in the project root, overwriting the last one.
 
-Before overwriting an old bundle, read its first lines. Its header records the commit it was built from, and `git log <that commit>..HEAD` is the list of what changed since, which the summary should mention.
+Before overwriting an old bundle, read its first lines. Its header records the commit it was built from, and `git log <that commit>..HEAD` is the list of what changed since, which the summary should mention. If the bundle has a new name and so nothing to overwrite, list instead the commits that touched the bundled files since the work under review began (`git log <first commit of it>^..HEAD -- <files>`).
 
 ## 2. Understand the focus before writing about it
 
 Read the commits (`git log`, `git show <commit>`) and the code they touch. A summary written from the commit message alone repeats what the reviewer could have guessed; one written from the code can say which line decides the outcome.
 
-Measure where it is cheap. If the project can run the thing headlessly (here: bot-only matches, see "Balance changes" in `CLAUDE.md`), run it and put the numbers in. Numbers let the reviewer judge the design by its effect, and they often show the most interesting question.
+Measure where it is cheap, with whatever actually runs the code under review. For game rules or bot behaviour that is bot-only matches (see "Balance changes" in `CLAUDE.md`). For anything else, a short scratch script that drives the real module is fine: for client netcode, for example, feed the real predictor from the real sim through a made-up delay. Numbers let the reviewer judge the design by its effect, and they often show the most interesting question. Say how each number was measured, and label any figure you copied from a commit message as the author's and not re-measured.
 
 ## 3. Write the summary
 
@@ -52,9 +52,9 @@ Numbered. Real doubts about the design, each concrete enough to answer.
 Which files were left out, so the reviewer knows what they cannot see.
 ```
 
-If a file matters to the focus but the user did not ask for it in full, show its part as a diff (`git show <commit> -- <path>`) inside the summary.
+If a file matters to the focus but the user did not ask for it in full, show its part inside the summary: as a diff (`git show <commit> -- <path>`) if the commits under review changed it, or else by quoting the functions that matter under "Not included". Name that file under `quoted` in the manifest so its quotes are checked too.
 
-Every code quote must be real. After writing, grep each quoted line in the source. A reviewer who finds one invented line stops trusting the rest.
+Every code quote must be real: a reviewer who finds one invented line stops trusting the rest. The script checks this for you (step 4), but only line by line, so read each quote once against the source for lines that are repeated or out of order.
 
 ## 4. Build the bundle
 
@@ -76,14 +76,16 @@ Write a manifest next to the summary and run the script from the project root:
 node .claude/skills/architectural-review/scripts/bundle.mjs <path to manifest.json>
 ```
 
-The script adds the title, the date, branch and commit, a table of the files with line counts and roles, then each file whole under `## File: <path>`. It reads every file back out of the bundle and compares it with the source, and prints one line ending "every file identical to its source". If it exits with an error, fix the cause; do not hand-edit the bundle. It refuses files that exist to hold secrets (`.env`, key files). Look through anything else you bundle for tokens or passwords yourself, because this file is going to an outside service.
+The script adds the title, the date, branch and commit, a table of the files with line counts and roles, then each file whole under `## File: <path>`. It reads every file back out of the bundle and compares it with the source, and prints one line ending "every file identical to its source".
+
+It then checks the summary's code quotes: every line inside a code block written in a bundled file's language must be a line of a bundled file, or of a file listed under `"quoted": ["server.js"]` in the manifest. Lines it cannot find are printed. Each one is a slip to fix, or a quote from a file to add to `quoted`; an elision written as `// ...` is ignored. Diffs, shell commands and JSON are not checked. If it exits with an error, fix the cause; do not hand-edit the bundle. It refuses files that exist to hold secrets (`.env`, key files). Look through anything else you bundle for tokens or passwords yourself, because this file is going to an outside service.
 
 Give each file a `role` of a few words: the reviewer reads that table first.
 
 ## 5. Deliver
 
 - Say where the file is, how large, which commit it is from, and what is not in it.
-- If the user is working remotely and a tool for sending files exists, send the file too.
+- If you have a tool for sending files to the user, send the file too, unless the request said not to. They may be away from the computer the file is on.
 - Leave it out of git. It is a copy of code the repository already has, and committing it would put a stale duplicate of every file in the history.
 
 ## Google Drive (only if the user asks)
