@@ -31,7 +31,19 @@ const keys = new Set();
 const mouse = { x: innerWidth / 2, y: innerHeight / 2, wx: 0, wy: 0, left: false, right: false };
 const seen = { phase: '', wave: -1, alive: [true, true, true] };
 let buildType = null, ghostWhy = null, lastOrder = '', dark = 0, lastFrame = performance.now(), zoom = 2, mood = -1, bannerUntil = 0;
-const heard = { id: 0, phase: '', hp: 0, built: 0, hitAt: 0 }, strides = new Map();
+const heard = { id: 0, phase: '', hp: 0, built: 0, hitAt: 0, aegis: [] }, strides = new Map();
+// The big moments throw sparks and jolt the camera. Both are for show only: they live here, not in the match.
+// n sparks start `spread` world units out from the point (lifted `lift`), fly at up to `speed`, rise at `up` and last `life` s;
+// `size` is their width in art pixels and `jolt` how far the camera is knocked when it happens mid-screen.
+const BOOM = {
+  fall: { n: 110, speed: 600, life: 1.6, jolt: 8, size: 3, spread: 12, lift: 20, up: 70, cols: ['#ffffff', '#55505a'] }, // an Ember goes out; its team's colour is added
+  colossus: { n: 70, speed: 400, life: 1.2, jolt: 5, size: 3, spread: 24, lift: 0, up: 50, cols: ['#e58cff', '#b79cff', '#ffffff'] },
+  slam: { n: 16, speed: 220, life: 0.6, jolt: 2.5, size: 2, spread: 50, lift: 0, up: 0, cols: ['#e58cff', '#d9cdb8'] },
+  down: { n: 12, speed: 160, life: 0.6, jolt: 0, size: 2, spread: 0, lift: 14, up: 30, cols: ['#ff6b6b', '#ffffff'] },
+  aegis: { n: 14, speed: 30, life: 0.9, jolt: 1.5, size: 2, spread: 44, lift: 20, up: 90, cols: ['#bfe9ff', '#ffffff'] }, // motes shed by the ring Aegis draws round a hero
+};
+const sparks = [], calm = matchMedia('(prefers-reduced-motion: reduce)'); // reduced motion: sparks, but a still camera
+let shake = 0;
 
 // ---------------------------------------------------------------- connection
 
@@ -171,9 +183,27 @@ function scoreTable(s) {
   return table;
 }
 
+/** How close to the middle of the screen something is: 1 there, 0 from 900 world units away. */
+const near = (o) => clamp(1 - Math.hypot(o.x - cam.x, o.y - cam.y) / 900, 0, 1);
+
+/** Sparks flying out from a world point, and a camera jolt that is weaker the further off it is (but never under `least` of it). */
+function boom(kind, o, extra = [], least = 0) {
+  const B = BOOM[kind], cols = [...extra, ...B.cols];
+  for (let k = 0; k < B.n; k++) {
+    const a = Math.random() * Math.PI * 2, d = B.spread * (0.6 + 0.4 * Math.random()), v = B.speed * (0.25 + 0.75 * Math.random());
+    sparks.push({
+      x: o.x + Math.cos(a) * d, y: o.y + Math.sin(a) * d * 0.7 - B.lift, vx: Math.cos(a) * v, vy: Math.sin(a) * v * 0.7 - B.up,
+      life: B.life, t: B.life * (0.5 + 0.5 * Math.random()), col: cols[k % cols.length], size: B.size + (k % 3 === 0),
+    });
+  }
+  if (sparks.length > 400) sparks.splice(0, sparks.length - 400);
+  if (!calm.matches) shake = Math.max(shake, B.jolt * Math.max(least, near(o)));
+}
+/** The picture runs a little behind the news (see the timeline), so a boom waits that long and goes off when it is seen to happen. */
+const later = (fn) => setTimeout(fn, Math.max(0, snaps.at(-1).at - timeline.at(performance.now())));
+
 /** Play what changed since the last snapshot: new shots and effects near the camera, the turn of day, our Ember being hit. */
 function hear(s) {
-  const near = (o) => clamp(1 - Math.hypot(o.x - cam.x, o.y - cam.y) / 900, 0, 1);
   const team = teamOf(slot), mine = slot >= 0 ? s.teams[team] : null;
   if (heard.id && mine) { // not on the first snapshot, when everything is new
     const guns = new Map();
@@ -188,7 +218,15 @@ function hear(s) {
       if (f.id <= heard.id) continue;
       if (f.kind === 'fall') sound.play('Ember lost', 0.7);
       else if (FX_SOUND[f.kind] && (f.kind !== 'pop' || pops++ < 2)) sound.play(FX_SOUND[f.kind], near(f) * (f.kind === 'pop' ? 0.5 : 1));
+      if (f.kind === 'fall') later(() => boom('fall', f, [TEAMS[f.team].color, TEAMS[f.team].color], 0.35)); // felt, a little, wherever you are
+      else if (f.kind === 'pop' && f.r >= ENEMIES.colossus.r * 2) later(() => boom('colossus', f));
+      else if (f.kind === 'ring' && f.team < 0) later(() => boom('slam', f)); // a Colossus's ground-slam
+      else if (f.kind === 'down') later(() => boom('down', f, [TEAMS[f.team].color]));
     }
+    s.teams.forEach((T, k) => { // Aegis going up: motes rise off every hero it covers
+      if (T.aegis > (heard.aegis[k] ?? 0)) for (const h of s.heroes) if (h.team === k && h.alive) later(() => boom('aegis', h.i === slot && me.known ? me : h));
+      heard.aegis[k] = T.aegis;
+    });
     if (s.phase !== heard.phase) {
       if (s.phase === 'night') sound.play('Night falls');
       else if (s.phase === 'day') sound.play('Dawn');
@@ -581,7 +619,8 @@ function draw(s, now) {
   if (!s) return;
   wear(s.mood);
   // The camera moves a whole art pixel at a time, so nothing shimmers as it scrolls.
-  const ox = Math.round(cam.x * PX - W / 2), oy = Math.round(cam.y * PX - H / 2);
+  const jolt = () => Math.round((Math.random() * 2 - 1) * shake);
+  const ox = Math.round(cam.x * PX - W / 2) + jolt(), oy = Math.round(cam.y * PX - H / 2) + jolt();
   const X = (v) => Math.round(v * PX) - ox, Y = (v) => Math.round(v * PX) - oy;
   const inView = (o, pad = 40) => { const x = X(o.x), y = Y(o.y); return x > -pad && y > -pad && x < W + pad && y < H + pad; };
   ctx.drawImage(ground(mood), -ox, -oy);
@@ -620,6 +659,7 @@ function draw(s, now) {
   if (dark > 0.3) for (const e of s.enemies) if (inView(e)) art.eyes(e, X(e.x), Y(e.y) + ENEMIES[e.type].r * PX * 0.6); // a wave is seen coming
   for (const sh of s.shots) if (inView(sh)) art.shot(sh, X(sh.x), Y(sh.y));
   for (const f of s.fx) if (inView(f, 200)) art.fx(f, X(f.x), Y(f.y), f.r * PX);
+  for (const p of sparks) if (inView(p)) art.spark(p, X(p.x), Y(p.y));
   if (buildType && slot >= 0) drawGhost(X, Y);
   if (touch.used && slot >= 0 && me.known) art.ring(X(me.x), Y(me.y), HEROES[s.heroes[slot].kind].gun.range * PX, 'rgba(255,255,255,0.4)', { gap: 4 }); // how far the automatic gun reaches
 }
@@ -636,6 +676,15 @@ function frame(now) {
   while (k > 0 && snaps[k].at > at) k--;
   const a = snaps[k], b = snaps[k + 1];
   follow(dt);
+  for (const p of sparks) { // they slow as they fly and sink a little, like embers
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vx *= 1 - 2.5 * dt;
+    p.vy += (60 - 2.5 * p.vy) * dt;
+    p.t -= dt;
+  }
+  for (let k = sparks.length - 1; k >= 0; k--) if (sparks[k].t <= 0) sparks.splice(k, 1);
+  shake = shake < 0.4 ? 0 : shake * 0.5 ** (dt / 0.12); // halves every 120 ms
   draw(b ? interpolate(a.s, b.s, (at - a.at) / (b.at - a.at)) : a.s, now);
   if (slot >= 0 && (mouse.left || mouse.right)) order(); // the hero may have walked a new cell under a held cursor
 }

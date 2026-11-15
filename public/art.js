@@ -291,6 +291,13 @@ export function createArt(g) {
       if (f.kind === 'scrap' || f.kind === 'heal') for (let k = 0; k < 5; k++) { g.globalAlpha = 1 - p; S.R(x - 8 + hash(k, f.id) * 16, y - p * 16 - hash(k, 5) * 8, 2, 2, col); }
       g.globalAlpha = 1;
     },
+    /** One spark of a burst: a square that shrinks and fades as its time (p.t of p.life) runs out. */
+    spark(p, x, y) {
+      const k = p.t / p.life, size = p.size - (k < 0.4 ? 1 : 0);
+      g.globalAlpha = Math.min(1, k * 2.5);
+      S.R(x - 1, y - 1, size, size, p.col);
+      g.globalAlpha = 1;
+    },
     /** A soft additive glow, for fire. */
     glow(x, y, r, col, a) {
       const gr = g.createRadialGradient(x, y, 0, x, y, r);
