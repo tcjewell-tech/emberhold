@@ -817,3 +817,14 @@ test('endless mode climbs in difficulty at a gentler pace, night for night', () 
   assert.ok(endless.pack < normal.pack && endless.hp < normal.hp && endless.dmg < normal.dmg, 'easier than a normal fifth night');
   assert.ok(endless.hp > first.hp && endless.dmg > first.dmg, 'but harder than the first');
 });
+
+test('dash, which the client borrows to predict its own, blinks the way the hero moves or else the way it aims', () => {
+  const g = S.createGame(1), h = { x: 1800, y: 1500, aim: Math.PI / 2, team: 0 }, far = S.HEROES.dart.q.dist;
+  S.dash(g, h, 1, 0);
+  assert.ok(Math.abs(h.x - (1800 + far)) < 1e-6 && h.y === 1500);
+  S.dash(g, h, 0, 0);
+  assert.ok(Math.abs(h.y - (1500 + far)) < 1e-6, 'standing still: along the aim');
+  const wall = S.addStruct(g, 'wall', 1, Math.floor(h.x / S.CELL) + 2, Math.floor(h.y / S.CELL));
+  S.dash(g, h, 1, 0);
+  assert.ok(h.x < wall.x - S.CELL / 2, 'a rival Wall stops it');
+});

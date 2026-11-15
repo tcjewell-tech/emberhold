@@ -176,6 +176,41 @@ export function createBuildPredictor(patience = 1000) {
 }
 
 /**
+ * This player's own ability bursts, shown the moment the key is pressed. cast() adds a local
+ * burst; heard() is shown each snapshot's effects and hides the server's copy of each burst
+ * when it arrives: the first new effect of that kind, from our team, near where we cast it.
+ * patience: ms we wait for that copy. reach: how near counts.
+ */
+export function createFxPredictor(patience = 1000, reach = 200) {
+  let local = [], owed = [];
+  const hidden = new Set();
+  return {
+    list: () => local,
+    /** f: { kind, x, y, r, team }, as the sim's own effects are. */
+    cast(f, now) {
+      local.push({ ...f, id: 0, ttl: 0.45 }); // an effect lasts 0.45 s in the sim
+      owed.push({ ...f, until: now + patience });
+    },
+    step(dt) {
+      for (const f of local) f.ttl -= dt;
+      local = local.filter((f) => f.ttl > 0);
+    },
+    /** fx: a snapshot's effects. last: the newest id the snapshot before it had given out. */
+    heard(fx, last, now) {
+      owed = owed.filter((o) => o.until > now);
+      for (const f of fx) {
+        const k = f.id > last ? owed.findIndex((o) => o.kind === f.kind && o.team === f.team && Math.hypot(o.x - f.x, o.y - f.y) < reach) : -1;
+        if (k < 0) continue;
+        owed.splice(k, 1);
+        hidden.add(f.id);
+      }
+      for (const id of hidden) if (!fx.some((f) => f.id === id)) hidden.delete(id);
+    },
+    hides: (id) => hidden.has(id),
+  };
+}
+
+/**
  * Reads the server's messages. Every message arrives as one stream of raw-deflate data
  * (newline-separated JSON), compressed by the server itself: some hosts' proxies strip the
  * WebSocket's own compression, which would send each player about 260 KB/s instead of about 25.

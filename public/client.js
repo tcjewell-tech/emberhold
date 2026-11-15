@@ -1,9 +1,9 @@
 // Emberhold browser client: sends this player's input and draws the snapshots the server
 // sends back. No rules live here: canBuild, moveHero and shotHit are the sim's own, imported
 // to colour the build ghost and to predict this player's own steps, shots and builds.
-import { WORLD, CELL, TEAMS, HEROES, HERO_IDS, STRUCTS, ENEMIES, EMBER_R, HERO_R, BUILD_RANGE, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, moveHero, shotHit, inArena, ARENA, POWERUPS, TEAM_SIZE, teamOf } from './sim.js';
+import { WORLD, CELL, TEAMS, HEROES, HERO_IDS, STRUCTS, ENEMIES, EMBER_R, HERO_R, BUILD_RANGE, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, moveHero, dash, shotHit, inArena, ARENA, POWERUPS, TEAM_SIZE, teamOf } from './sim.js';
 import { interpolate } from './interp.js';
-import { createTimeline, createPredictor, createGunPredictor, createBuildPredictor, createUnpacker } from './net.js';
+import { createTimeline, createPredictor, createGunPredictor, createBuildPredictor, createFxPredictor, createUnpacker } from './net.js';
 import { PX, TILE, MOODS, ground, heroSprite, createArt } from './art.js';
 import { createSound } from './sound.js';
 import { createTouch } from './touch.js';
@@ -30,6 +30,9 @@ const cam = { x: WORLD.w / 2, y: WORLD.h / 2, scale: 1 };
 const me = createPredictor(); // this player's hero, predicted locally
 const gun = createGunPredictor(), builder = createBuildPredictor(); // and its shots and the structures it orders
 let firing = false; // what we last told the server about the trigger
+const spells = createFxPredictor(); // the bursts of our own Q and R
+let qAt = -1e9, rAt = -1e9; // when we last showed our own Q and R ahead of the server (ms)
+const fresh = (at) => performance.now() - at < 1000; // still waiting for the server's word on it
 const keys = new Set();
 const mouse = { x: innerWidth / 2, y: innerHeight / 2, wx: 0, wy: 0, left: false, right: false };
 const seen = { phase: '', wave: -1, alive: [true, true, true] };
@@ -74,6 +77,7 @@ function connect() {
       if (slot >= 0 && m.s.heroes[slot].alive) me.heard(m.acks[slot], m.s.heroes[slot]);
       if (slot >= 0) gun.heard(m.s.shots, slot, m.s.nextId - 1, performance.now()); // not while watching: Turret and AI shots have owner -1
       builder.heard(m.s.structs, performance.now());
+      spells.heard(m.s.fx, heard.id, performance.now());
       hear(m.s);
       onState(m.s);
     } else if (m.t === 'lobby') {
@@ -222,7 +226,7 @@ function hear(s) {
     [...guns.values()].sort((a, b) => b[1] - a[1]).slice(0, 4).forEach(([name, vol]) => sound.play(name, vol));
     let pops = 0;
     for (const f of s.fx) {
-      if (f.id <= heard.id) continue;
+      if (f.id <= heard.id || spells.hides(f.id)) continue; // our own Q or R was heard when we pressed it
       if (f.kind === 'fall') sound.play('Ember lost', 0.7);
       else if (FX_SOUND[f.kind] && (f.kind !== 'pop' || pops++ < 2)) sound.play(FX_SOUND[f.kind], near(f) * (f.kind === 'pop' ? 0.5 : 1));
       if (f.kind === 'fall') later(() => boom('fall', f, [TEAMS[f.team].color, TEAMS[f.team].color], 0.35)); // felt, a little, wherever you are
@@ -306,10 +310,12 @@ function hud() {
   const buffs = ['rush', 'fury'].filter((k) => h[k] > 0).map((k) => ` · ${POWERUPS[k].name} ${Math.ceil(h[k])}s`).join('');
   $('meHp').textContent = h.out ? 'Out' : h.alive ? `${Math.ceil(h.hp)} / ${h.max}${h.shieldMax ? ` + ${Math.ceil(h.shield)} shield` : ''}${buffs}` : `Back in ${Math.ceil(h.respawn)}s`;
   width($('hp'), h.hp / h.max);
-  $('q').classList.toggle('ready', h.alive && h.qCd <= 0);
-  $('q').lastChild.textContent = h.qCd > 0 ? `${h.qCd.toFixed(1)}s` : 'Ready';
-  $('r').classList.toggle('ready', h.alive && h.ult >= 100);
-  $('r').lastChild.textContent = h.ult >= 100 ? 'Ready' : `${Math.floor(h.ult)}% charged`;
+  // A Q or R we have just pressed reads as used at once, for the second it takes the server to say so (or not).
+  const qCd = h.qCd > 0 ? h.qCd : fresh(qAt) ? d.q.cd - (performance.now() - qAt) / 1000 : 0, ult = fresh(rAt) && h.ult >= 100 ? 0 : h.ult;
+  $('q').classList.toggle('ready', h.alive && qCd <= 0);
+  $('q').lastChild.textContent = qCd > 0 ? `${qCd.toFixed(1)}s` : 'Ready';
+  $('r').classList.toggle('ready', h.alive && ult >= 100);
+  $('r').lastChild.textContent = ult >= 100 ? 'Ready' : `${Math.floor(ult)}% charged`;
 
   const scrap = Math.max(0, T.scrap - builder.cost()); // what we have just ordered is already spent
   $('scrap').lastChild.textContent = scrap;
@@ -370,6 +376,7 @@ function moveVec() {
 function sendInput(extra) {
   if (slot < 0) return;
   const [mx, my] = moveVec();
+  if (extra?.q || extra?.r) cast(extra, mx, my); // before me.sent: a predicted Dash is part of where we say we were
   me.sent(++seq);
   let fire = mouse.left && !buildType, use = keys.has('KeyF');
   if (touch.used && latest) {
@@ -382,6 +389,32 @@ function sendInput(extra) {
   }
   firing = fire && ws.readyState === 1; // nothing fires on screen while the connection is down
   send({ t: 'input', seq, mx, my, aim: me.aim, fire, use, ...extra });
+}
+
+/**
+ * Our own Q or R, shown the moment it is pressed: its sound and burst, the HUD's cooldown and, for Dart, the Dash
+ * itself by the sim's own rule. The server still decides whether it happened; if not, a Dash is put back when it answers.
+ */
+function cast({ q, r }, mx, my) {
+  const h = latest?.heroes[slot], now = performance.now();
+  if (!h || !h.alive || !me.known || h.stun > 0 || ws.readyState !== 1 || latest.phase === 'over') return;
+  const d = HEROES[h.kind], at = { x: me.x, y: me.y, team: h.team };
+  if (r && h.ult >= 100 && !fresh(rAt)) {
+    rAt = now;
+    spells.cast({ kind: 'ult', r: 70, ...at }, now);
+    sound.play(FX_SOUND.ult);
+  }
+  // Cog's Sentry has no burst, and Reforge does nothing (and is not spent) with nothing in reach to mend.
+  const kind = { anvil: 'ring', dart: 'dash', patch: 'heal', forge: 'fix' }[h.kind];
+  const mend = (st) => st.team === h.team && st.type !== 'spikes' && st.hp < st.max && Math.hypot(st.x - me.x, st.y - me.y) <= d.q.r;
+  if (!q || !kind || h.qCd > 0 || fresh(qAt) || (h.kind === 'forge' && !latest.structs.some(mend))) return;
+  qAt = now;
+  spells.cast({ kind, r: d.q.r ?? 22, ...at }, now);
+  sound.play(FX_SOUND[kind]);
+  if (h.kind === 'dart') {
+    me.team = h.team;
+    dash(latest, me, mx, my);
+  }
 }
 
 /** canBuild, counting what we have ordered and not yet heard back about: those cells are taken and their Scrap is spent. */
@@ -696,7 +729,7 @@ function draw(s, now) {
   nightfall(s, X, Y, shots);
   if (dark > 0.3) for (const e of s.enemies) if (inView(e)) art.eyes(e, X(e.x), Y(e.y) + ENEMIES[e.type].r * PX * 0.6); // a wave is seen coming
   for (const sh of shots) if (inView(sh)) art.shot(sh, X(sh.x), Y(sh.y));
-  for (const f of s.fx) if (inView(f, 200)) art.fx(f, X(f.x), Y(f.y), f.r * PX);
+  for (const f of [...s.fx.filter((f) => !spells.hides(f.id)), ...spells.list()]) if (inView(f, 200)) art.fx(f, X(f.x), Y(f.y), f.r * PX);
   for (const p of sparks) if (inView(p)) art.spark(p, X(p.x), Y(p.y));
   if (buildType && slot >= 0) drawGhost(X, Y);
   if (touch.used && slot >= 0 && me.known) art.ring(X(me.x), Y(me.y), HEROES[s.heroes[slot].kind].gun.range * PX, 'rgba(255,255,255,0.4)', { gap: 4 }); // how far the automatic gun reaches
@@ -719,6 +752,7 @@ function frame(now) {
     const from = can ? { x: me.x, y: me.y, aim: me.aim, team: h.team } : null, def = HEROES[h.kind];
     if (gun.step(dt, now, from, def.gun, h.overdrive > 0 ? HEROES.dart.r.mult : 1, (sh) => !inArena(sh.x, sh.y) || shotHit(latest, sh) !== null)) sound.play(def.gun.name);
   }
+  spells.step(dt);
   for (const p of sparks) { // they slow as they fly and sink a little, like embers
     p.x += p.vx * dt;
     p.y += p.vy * dt;

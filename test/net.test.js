@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTimeline, createPredictor, createGunPredictor, createBuildPredictor } from '../public/net.js';
+import { createTimeline, createPredictor, createGunPredictor, createBuildPredictor, createFxPredictor } from '../public/net.js';
 
 // ---------------------------------------------------------------- timeline
 
@@ -248,4 +248,28 @@ test('an order that was built and is gone again before the picture showed it is 
   b.shown([]);
   assert.equal(b.list().length, 0);
   assert.equal(b.has(4, 5), false, 'and the cell can be built on again');
+});
+
+test('our own ability burst shows at once, and the server copy of it is hidden when it arrives', () => {
+  const fx = createFxPredictor(1000, 200), ring = { kind: 'ring', x: 100, y: 100, r: 120, team: 0 };
+  fx.cast(ring, 0);
+  assert.equal(fx.list().length, 1, 'drawn from the moment of the key press');
+  const theirs = { ...ring, id: 7, team: 1 }, far = { ...ring, id: 8, x: 900 }, other = { ...ring, id: 9, kind: 'heal' }, copy = { ...ring, id: 10, x: 130 }, next = { ...ring, id: 11 };
+  fx.heard([theirs, far, other, copy, next], 6, 300);
+  assert.deepEqual([7, 8, 9, 10, 11].map(fx.hides), [false, false, false, true, false], 'only the first near burst of that kind from our team');
+  fx.heard([copy], 11, 330);
+  assert.equal(fx.hides(10), true, 'for as long as it lasts');
+  fx.heard([], 11, 360);
+  assert.equal(fx.hides(10), false);
+  for (let f = 0; f < 30; f++) fx.step(1 / 60);
+  assert.equal(fx.list().length, 0, 'the local burst fades like any other, in 0.45 s');
+});
+
+test('a burst the server never answers stops waiting, and an old effect is never taken for its copy', () => {
+  const fx = createFxPredictor(1000), heal = { kind: 'heal', x: 0, y: 0, r: 150, team: 2 };
+  fx.cast(heal, 0);
+  fx.heard([{ ...heal, id: 4 }], 5, 100);
+  assert.equal(fx.hides(4), false, 'it was already there before we pressed the key');
+  fx.heard([{ ...heal, id: 20 }], 5, 1500);
+  assert.equal(fx.hides(20), false, 'a second has passed: that one is somebody else\u2019s');
 });

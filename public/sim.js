@@ -445,6 +445,17 @@ function tryRemove(s, h, r) {
   removeStruct(s, st);
 }
 
+/** Dart's Dash: a blink the way it is moving (the way it aims, if standing still). The client runs this too, to predict its own. */
+export function dash(s, h, mx, my) {
+  let ux = mx, uy = my;
+  if (!ux && !uy) {
+    ux = Math.cos(h.aim);
+    uy = Math.sin(h.aim);
+  }
+  const len = Math.hypot(ux, uy), hop = HEROES.dart.q.dist / 10;
+  for (let k = 0; k < 10; k++) moveHero(s, h, (ux / len) * hop, (uy / len) * hop); // small hops so a rival Wall stops it
+}
+
 /** Q. Returns false if nothing happened, so the cooldown is not spent. */
 function ability(s, h, mx, my) {
   const q = HEROES[h.kind].q;
@@ -465,14 +476,8 @@ function ability(s, h, mx, my) {
     }
     addFx(s, 'ring', h.x, h.y, q.r, h.team);
   } else if (h.kind === 'dart') {
-    let ux = mx, uy = my;
-    if (!ux && !uy) {
-      ux = Math.cos(h.aim);
-      uy = Math.sin(h.aim);
-    }
-    const len = Math.hypot(ux, uy), hop = q.dist / 10;
     addFx(s, 'dash', h.x, h.y, 22, h.team);
-    for (let k = 0; k < 10; k++) moveHero(s, h, (ux / len) * hop, (uy / len) * hop); // small hops so a rival Wall stops it
+    dash(s, h, mx, my);
   } else if (h.kind === 'patch') {
     for (const o of s.heroes) if (o.alive && o.team === h.team && dist2(h.x, h.y, o.x, o.y) <= q.r * q.r) heal(h, o, q.heal, true);
     addFx(s, 'heal', h.x, h.y, q.r, h.team);
