@@ -456,7 +456,24 @@ export function dash(s, h, mx, my) {
   for (let k = 0; k < 10; k++) moveHero(s, h, (ux / len) * hop, (uy / len) * hop); // small hops so a rival Wall stops it
 }
 
-/** Q. Returns false if nothing happened, so the cooldown is not spent. */
+// The client reads the next three too, to predict its own hero by the same rules.
+/** How many times its gun's usual rate a hero fires at. */
+export const heroFireMult = (h) => (h.overdrive > 0 ? HEROES.dart.r.mult : 1);
+/** World units a second. */
+export const heroSpeed = (h) => HEROES[h.kind].speed * (h.rush > 0 ? POWERUPS.rush.speed : 1);
+
+/**
+ * May this hero use its Q or R (key 'q' or 'r') now? Forge's Reforge needs something of its team's in reach to mend.
+ * Cog's Sentry can still find no room once this says yes: ability() has the last word on that.
+ */
+export function canCast(s, h, key) {
+  if (!h.alive || h.stun > 0) return false;
+  if (key === 'r') return h.ult >= 100;
+  const q = HEROES[h.kind].q;
+  return h.qCd <= 0 && (h.kind !== 'forge' || s.structs.some((st) => st.team === h.team && st.type !== 'spikes' && st.hp < st.max && dist2(h.x, h.y, st.x, st.y) <= q.r * q.r));
+}
+
+/** Q, once canCast allows it. Returns false if nothing happened, so the cooldown is not spent. */
 function ability(s, h, mx, my) {
   const q = HEROES[h.kind].q;
   if (h.kind === 'anvil') {
@@ -489,7 +506,6 @@ function ability(s, h, mx, my) {
       st.hp += a;
       fixed += a;
     }
-    if (!fixed) return false;
     h.ult = Math.min(100, h.ult + fixed * ULT_PER_HEAL);
     h.stats.heal += fixed; // repairs count beside healing on the scoreboard
     addFx(s, 'fix', h.x, h.y, q.r, h.team);
@@ -562,7 +578,7 @@ function updateHero(s, h, raw, dt) {
     mx /= len;
     my /= len;
   }
-  const speed = def.speed * (h.rush > 0 ? POWERUPS.rush.speed : 1);
+  const speed = heroSpeed(h);
   moveHero(s, h, mx * speed * dt, my * speed * dt);
 
   const under = structAt(s, cellOf(h.x), cellOf(h.y));
@@ -575,11 +591,11 @@ function updateHero(s, h, raw, dt) {
 
   if (inp.fire && h.fireCd <= 0) {
     const g = def.gun;
-    h.fireCd += 1 / (g.rate * (h.overdrive > 0 ? HEROES.dart.r.mult : 1));
+    h.fireCd += 1 / (g.rate * heroFireMult(h));
     for (let p = 0; p < g.pellets; p++) shoot(s, h.x, h.y, h.aim + (rand(s) - 0.5) * g.spread, g.speed, g.range, g.dmg * (h.fury > 0 ? POWERUPS.fury.mult : 1), h.team, h.i);
   }
-  if (inp.q && h.qCd <= 0 && ability(s, h, mx, my)) h.qCd = def.q.cd;
-  if (inp.r && h.ult >= 100) ultimate(s, h);
+  if (inp.q && canCast(s, h, 'q') && ability(s, h, mx, my)) h.qCd = def.q.cd;
+  if (inp.r && canCast(s, h, 'r')) ultimate(s, h);
 
   const wreck = inp.use ? nearest(s.wrecks, h.x, h.y, SCAV_RANGE, (w) => !w.dead) : null;
   if (!wreck) h.scav = h.scavId = 0;

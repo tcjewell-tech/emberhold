@@ -1,7 +1,7 @@
 // Emberhold browser client: sends this player's input and draws the snapshots the server
 // sends back. No rules live here: canBuild, moveHero and shotHit are the sim's own, imported
 // to colour the build ghost and to predict this player's own steps, shots and builds.
-import { WORLD, CELL, TEAMS, HEROES, HERO_IDS, STRUCTS, ENEMIES, EMBER_R, HERO_R, BUILD_RANGE, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, moveHero, dash, shotHit, inArena, ARENA, POWERUPS, TEAM_SIZE, teamOf } from './sim.js';
+import { WORLD, CELL, TEAMS, HEROES, HERO_IDS, STRUCTS, ENEMIES, EMBER_R, HERO_R, BUILD_RANGE, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, moveHero, dash, shotHit, heroFireMult, heroSpeed, canCast, inArena, ARENA, POWERUPS, TEAM_SIZE, teamOf } from './sim.js';
 import { interpolate } from './interp.js';
 import { createTimeline, createPredictor, createGunPredictor, createBuildPredictor, createFxPredictor, createUnpacker } from './net.js';
 import { PX, TILE, MOODS, ground, heroSprite, createArt } from './art.js';
@@ -397,17 +397,15 @@ function sendInput(extra) {
  */
 function cast({ q, r }, mx, my) {
   const h = latest?.heroes[slot], now = performance.now();
-  if (!h || !h.alive || !me.known || h.stun > 0 || ws.readyState !== 1 || latest.phase === 'over') return;
+  if (!h || !me.known || ws.readyState !== 1 || latest.phase === 'over') return;
   const d = HEROES[h.kind], at = { x: me.x, y: me.y, team: h.team };
-  if (r && h.ult >= 100 && !fresh(rAt)) {
+  if (r && canCast(latest, h, 'r') && !fresh(rAt)) {
     rAt = now;
     spells.cast({ kind: 'ult', r: 70, ...at }, now);
     sound.play(FX_SOUND.ult);
   }
-  // Cog's Sentry has no burst, and Reforge does nothing (and is not spent) with nothing in reach to mend.
-  const kind = { anvil: 'ring', dart: 'dash', patch: 'heal', forge: 'fix' }[h.kind];
-  const mend = (st) => st.team === h.team && st.type !== 'spikes' && st.hp < st.max && Math.hypot(st.x - me.x, st.y - me.y) <= d.q.r;
-  if (!q || !kind || h.qCd > 0 || fresh(qAt) || (h.kind === 'forge' && !latest.structs.some(mend))) return;
+  const kind = { anvil: 'ring', dart: 'dash', patch: 'heal', forge: 'fix' }[h.kind]; // Cog's Sentry has no burst
+  if (!q || !kind || fresh(qAt) || !canCast(latest, { ...h, ...at }, 'q')) return; // asked of where we stand now, not where the server last saw us
   qAt = now;
   spells.cast({ kind, r: d.q.r ?? 22, ...at }, now);
   sound.play(FX_SOUND[kind]);
@@ -597,7 +595,7 @@ function follow(dt) {
     if (!me.known) me.place(h);
     else {
       // Walk by the sim's own rule, so rival Walls stop the prediction just as they stop the server.
-      const v = h.stun > 0 ? 0 : HEROES[h.kind].speed * (h.rush > 0 ? POWERUPS.rush.speed : 1) * dt;
+      const v = h.stun > 0 ? 0 : heroSpeed(h) * dt;
       me.team = h.team;
       moveHero(latest, me, mx * v, my * v);
       me.settle(dt);
@@ -751,7 +749,7 @@ function frame(now) {
   if (slot >= 0) { // our own gun fires on screen at once; the server's copies of those shots are hidden when they arrive
     const h = latest.heroes[slot], can = firing && h.alive && me.known && !(h.stun > 0) && latest.phase !== 'over';
     const from = can ? { x: me.x, y: me.y, aim: me.aim, team: h.team } : null, def = HEROES[h.kind];
-    if (gun.step(dt, now, from, def.gun, h.overdrive > 0 ? HEROES.dart.r.mult : 1, (sh) => !inArena(sh.x, sh.y) || shotHit(latest, sh) !== null)) sound.play(def.gun.name);
+    if (gun.step(dt, now, from, def.gun, heroFireMult(h), (sh) => !inArena(sh.x, sh.y) || shotHit(latest, sh) !== null)) sound.play(def.gun.name);
   }
   spells.step(dt);
   for (const p of sparks) { // they slow as they fly and sink a little, like embers

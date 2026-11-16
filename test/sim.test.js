@@ -751,6 +751,33 @@ test('Reforge repairs the team\'s own structures in reach, and is not spent when
   assert.ok(forge.ult > 0, 'repairing charges Aegis');
 });
 
+test('canCast, heroSpeed and heroFireMult say what step itself will do (the client predicts by them)', () => {
+  const g = arena(), anvil = place(g.heroes[AMBER + ANVIL], MID.x, MID.y), forge = place(g.heroes[AMBER + FORGE], MID.x, MID.y);
+  assert.equal(S.canCast(g, anvil, 'q'), true);
+  assert.equal(S.canCast(g, anvil, 'r'), false, 'no charge yet');
+  anvil.ult = 100;
+  assert.equal(S.canCast(g, anvil, 'r'), true);
+  anvil.qCd = 2;
+  assert.equal(S.canCast(g, anvil, 'q'), false, 'cooling down');
+  Object.assign(anvil, { qCd: 0, stun: 0.5 });
+  assert.deepEqual([S.canCast(g, anvil, 'q'), S.canCast(g, anvil, 'r')], [false, false], 'stunned');
+  Object.assign(anvil, { stun: 0, alive: false });
+  assert.deepEqual([S.canCast(g, anvil, 'q'), S.canCast(g, anvil, 'r')], [false, false], 'down');
+
+  const wall = S.addStruct(g, 'wall', 0, MID.cx + 2, MID.cy);
+  assert.equal(S.canCast(g, forge, 'q'), false, 'Reforge with nothing to mend');
+  wall.hp -= 1;
+  assert.equal(S.canCast(g, forge, 'q'), true);
+  assert.equal(S.canCast(g, { ...forge, x: forge.x + 2000 }, 'q'), false, 'asked of another spot: out of reach');
+
+  const dart = g.heroes[AMBER + DART];
+  assert.equal(S.heroSpeed(dart), S.HEROES.dart.speed);
+  assert.equal(S.heroFireMult(dart), 1);
+  Object.assign(dart, { rush: 1, overdrive: 1 });
+  assert.equal(S.heroSpeed(dart), S.HEROES.dart.speed * S.POWERUPS.rush.speed);
+  assert.equal(S.heroFireMult(dart), S.HEROES.dart.r.mult);
+});
+
 test('Aegis halves the damage the whole team takes, for as long as it lasts', () => {
   const g = arena(), r = S.HEROES.forge.r, bite = S.ENEMIES.skitter.dmg;
   const dart = place(g.heroes[AMBER + DART], MID.x, MID.y);
