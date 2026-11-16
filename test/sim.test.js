@@ -751,6 +751,18 @@ test('Reforge repairs the team\'s own structures in reach, and is not spent when
   assert.ok(forge.ult > 0, 'repairing charges Aegis');
 });
 
+test('the burst of a hero\'s Q or R names its hero, so that hero\'s client can tell it from a teammate\'s', () => {
+  const g = arena(), me = AMBER + ANVIL;
+  place(g.heroes[me], MID.x, MID.y).ult = 100;
+  run(g, DT, { [me]: { q: true, r: true } });
+  assert.deepEqual(g.fx.map((f) => [f.kind, f.owner]), [['ring', me], ['ult', me]]);
+  g.fx.length = 0;
+  S.spawnEnemy(g, 'skitter', 0, MID.x + 120, MID.y).hp = 0.1;
+  g.heroes[me].aim = 0;
+  for (let k = 0; k < 60 && !g.fx.length; k++) run(g, DT, { [me]: { fire: true, aim: 0 } });
+  assert.ok(g.fx.length && g.fx.every((f) => !('owner' in f)), 'nothing else carries one: it would only be bytes in every snapshot');
+});
+
 test('canCast, heroSpeed and heroFireMult say what step itself will do (the client predicts by them)', () => {
   const g = arena(), anvil = place(g.heroes[AMBER + ANVIL], MID.x, MID.y), forge = place(g.heroes[AMBER + FORGE], MID.x, MID.y);
   assert.equal(S.canCast(g, anvil, 'q'), true);

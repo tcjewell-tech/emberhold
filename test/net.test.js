@@ -271,7 +271,8 @@ test('a new match starts its ids again, and prediction carries on', () => {
   assert.equal(gun.hides(31), true);
 });
 
-const wall = (cx, cy) => ({ type: 'wall', cx, cy, cost: 10 });
+const wall = (cx, cy) => ({ type: 'wall', team: 0, cx, cy, cost: 10 });
+const built = (cx, cy, more) => ({ type: 'wall', team: 0, cx, cy, ...more }); // as a snapshot shows it
 
 test('an ordered structure is shown at once, charged until the server has it and kept until the drawn world has it', () => {
   const b = createBuildPredictor(1000);
@@ -282,18 +283,40 @@ test('an ordered structure is shown at once, charged until the server has it and
   b.heard([], 100);
   b.shown([]);
   assert.equal(b.cost(), 10, 'no answer yet');
-  b.heard([{ cx: 4, cy: 5 }], 200);
+  b.heard([built(4, 5)], 200);
   assert.equal(b.cost(), 0, 'the newest snapshot has it: its Scrap is already gone from the team\'s');
   b.shown([]);
   assert.equal(b.list().length, 1, 'but the picture, which runs behind, does not show it yet');
-  b.heard([{ cx: 4, cy: 5 }], 5000);
+  b.heard([built(4, 5)], 5000);
   assert.equal(b.list().length, 1, 'a paid order does not time out while its structure stands');
-  b.shown([{ cx: 4, cy: 5 }]);
+  b.shown([built(4, 5)]);
   assert.equal(b.list().length, 0, 'the real one has taken its place');
   assert.equal(b.has(4, 5), false);
 });
 
-test('an order the server refuses is taken away when its patience runs out', () => {
+test('an order the server has acted on and not built is taken away at once, and its Scrap comes back', () => {
+  const b = createBuildPredictor(1000);
+  b.place({ ...wall(4, 5), seq: 12 }, 0);
+  b.place({ ...wall(5, 5), seq: 13 }, 10);
+  b.heard([], 80, 11);
+  assert.equal(b.cost(), 20, 'the server has not come to either yet');
+  b.heard([], 110, 12);
+  assert.deepEqual(b.list().map((o) => o.cx), [5], 'input 12 is done and nothing stands in its cell: refused, a round trip after the click');
+  assert.equal(b.cost(), 10);
+  assert.equal(b.has(4, 5), false, 'and the cell can be tried again');
+  b.heard([built(5, 5)], 140, 13);
+  assert.equal(b.cost(), 0, 'the other was built');
+  assert.equal(b.list().length, 1);
+
+  const other = createBuildPredictor(1000);
+  other.place({ ...wall(6, 5), type: 'turret', seq: 20 }, 0);
+  other.heard([built(6, 5), built(6, 5, { type: 'turret', team: 1 })], 50, 19);
+  assert.equal(other.cost(), 10, 'a teammate\'s Wall or a rival\'s Turret in that cell is not ours');
+  other.heard([built(6, 5)], 80, 20);
+  assert.equal(other.list().length, 0, 'so with input 20 done, ours was refused');
+});
+
+test('an order the server never answers is taken away when its patience runs out', () => {
   const b = createBuildPredictor(1000);
   b.place(wall(1, 1), 0);
   b.place(wall(2, 1), 600);
@@ -307,7 +330,7 @@ test('an order the server refuses is taken away when its patience runs out', () 
 test('an order that was built and is gone again before the picture showed it is dropped, not left as a ghost', () => {
   const b = createBuildPredictor(1000);
   b.place(wall(4, 5), 0);
-  b.heard([{ cx: 4, cy: 5 }], 200); // built
+  b.heard([built(4, 5)], 200); // built
   b.heard([], 900); // destroyed, or removed, while the tab was in the background and nothing was being drawn
   b.shown([]);
   assert.equal(b.list().length, 0);
@@ -315,12 +338,13 @@ test('an order that was built and is gone again before the picture showed it is 
 });
 
 test('our own ability burst shows at once, and the server copy of it is hidden when it arrives', () => {
-  const fx = createFxPredictor(1000, 200), ring = { kind: 'ring', x: 100, y: 100, r: 120, team: 0 };
+  const fx = createFxPredictor(1000), ring = { kind: 'ring', x: 100, y: 100, r: 120, team: 0, owner: 0 };
   fx.cast(ring, 0);
   assert.equal(fx.list().length, 1, 'drawn from the moment of the key press');
-  const theirs = { ...ring, id: 7, team: 1 }, far = { ...ring, id: 8, x: 900 }, other = { ...ring, id: 9, kind: 'heal' }, copy = { ...ring, id: 10, x: 130 }, next = { ...ring, id: 11 };
-  fx.heard([theirs, far, other, copy, next], 6, 300);
-  assert.deepEqual([7, 8, 9, 10, 11].map(fx.hides), [false, false, false, true, false], 'only the first near burst of that kind from our team');
+  const { owner, ...slam } = { ...ring, id: 8 }; // a Colossus slam is a ring too, and nobody's
+  const theirs = { ...ring, id: 7, team: 1, owner: 5 }, other = { ...ring, id: 9, kind: 'heal' }, copy = { ...ring, id: 10, x: 130 }, next = { ...ring, id: 11 };
+  fx.heard([theirs, slam, other, copy, next], 6, 300);
+  assert.deepEqual([7, 8, 9, 10, 11].map(fx.hides), [false, false, false, true, false], 'only the first burst of that kind that is our own hero\'s');
   fx.heard([copy], 11, 330);
   assert.equal(fx.hides(10), true, 'for as long as it lasts');
   fx.heard([], 11, 360);
@@ -332,10 +356,25 @@ test('our own ability burst shows at once, and the server copy of it is hidden w
 });
 
 test('a burst the server never answers stops waiting, and an old effect is never taken for its copy', () => {
-  const fx = createFxPredictor(1000), heal = { kind: 'heal', x: 0, y: 0, r: 150, team: 2 };
+  const fx = createFxPredictor(1000), heal = { kind: 'heal', x: 0, y: 0, r: 150, team: 2, owner: 12 };
   fx.cast(heal, 0);
   fx.heard([{ ...heal, id: 4 }], 5, 100);
   assert.equal(fx.hides(4), false, 'it was already there before we pressed the key');
   fx.heard([{ ...heal, id: 20 }], 5, 1500);
   assert.equal(fx.hides(20), false, 'a second has passed: that one is somebody else\u2019s');
+});
+
+test('two teammates using their Ultimates side by side each keep their own burst', () => {
+  const ours = { kind: 'ult', x: 100, y: 100, r: 70, team: 0, owner: 3 }, mates = { ...ours, x: 110, owner: 4, id: 7 };
+  const fx = createFxPredictor(1000);
+  fx.cast(ours, 0);
+  fx.heard([mates], 6, 100); // the teammate's reaches us first, a step away from where we stand
+  assert.equal(fx.hides(7), false, 'the teammate\'s burst is drawn: it is not the copy of ours');
+  fx.heard([mates, { ...ours, id: 9 }], 7, 130);
+  assert.deepEqual([7, 9].map(fx.hides), [false, true], 'and ours, when it comes, is the one hidden');
+
+  const theirs = createFxPredictor(1000); // the same moment on the teammate's screen
+  theirs.cast({ ...ours, x: 110, owner: 4 }, 0);
+  theirs.heard([mates, { ...ours, id: 9 }], 6, 130);
+  assert.deepEqual([7, 9].map(theirs.hides), [true, false]);
 });

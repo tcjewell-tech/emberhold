@@ -293,8 +293,11 @@ function nearestEmber(s, x, y) {
 
 // ---------------------------------------------------------------- damage and rewards
 
-function addFx(s, kind, x, y, r, team) {
-  s.fx.push({ id: s.nextId++, kind, x, y, r, team, ttl: 0.45 });
+/** owner: the hero slot whose Q or R this is, so its client can tell its own burst from a teammate's. Left off every other effect. */
+function addFx(s, kind, x, y, r, team, owner) {
+  const f = { id: s.nextId++, kind, x, y, r, team, ttl: 0.45 };
+  if (owner !== undefined) f.owner = owner;
+  s.fx.push(f);
 }
 
 function credit(s, owner, dmg) {
@@ -491,13 +494,13 @@ function ability(s, h, mx, my) {
       hurtHero(s, o, q.dmg, h.team, h.i);
       if (o.alive) blast(o);
     }
-    addFx(s, 'ring', h.x, h.y, q.r, h.team);
+    addFx(s, 'ring', h.x, h.y, q.r, h.team, h.i);
   } else if (h.kind === 'dart') {
-    addFx(s, 'dash', h.x, h.y, 22, h.team);
+    addFx(s, 'dash', h.x, h.y, 22, h.team, h.i);
     dash(s, h, mx, my);
   } else if (h.kind === 'patch') {
     for (const o of s.heroes) if (o.alive && o.team === h.team && dist2(h.x, h.y, o.x, o.y) <= q.r * q.r) heal(h, o, q.heal, true);
-    addFx(s, 'heal', h.x, h.y, q.r, h.team);
+    addFx(s, 'heal', h.x, h.y, q.r, h.team, h.i);
   } else if (h.kind === 'forge') {
     let fixed = 0;
     for (const st of s.structs) {
@@ -508,7 +511,7 @@ function ability(s, h, mx, my) {
     }
     h.ult = Math.min(100, h.ult + fixed * ULT_PER_HEAL);
     h.stats.heal += fixed; // repairs count beside healing on the scoreboard
-    addFx(s, 'fix', h.x, h.y, q.r, h.team);
+    addFx(s, 'fix', h.x, h.y, q.r, h.team, h.i);
   } else {
     const cx = cellOf(h.x), cy = cellOf(h.y);
     const spot = [[0, 0], ...DIRS].find(([dx, dy]) => {
@@ -531,7 +534,7 @@ const push = (from, o, d) => {
 function ultimate(s, h) {
   const r = HEROES[h.kind].r;
   h.ult = 0;
-  addFx(s, 'ult', h.x, h.y, 70, h.team);
+  addFx(s, 'ult', h.x, h.y, 70, h.team, h.i);
   if (h.kind === 'anvil') h.fortify = r.time;
   else if (h.kind === 'dart') h.overdrive = r.time;
   else if (h.kind === 'patch') {

@@ -4,7 +4,7 @@ import net from 'node:net';
 import WS from 'ws';
 import { startServer } from '../server.js';
 import { createUnpacker } from '../public/net.js';
-import { createGame, HEROES, TEAM_SIZE } from '../public/sim.js';
+import { createGame, canBuild, CELL, HEROES, TEAM_SIZE } from '../public/sim.js';
 
 const AMBER_DART = 1, AZURE_DART = TEAM_SIZE + 1;
 
@@ -241,6 +241,32 @@ test('each snapshot carries the server tick and the last input heard from every 
     prev = next;
   }
   assert.ok(prev.n - later.n >= 19, `never more than one snapshot for every second tick: 10 took ${prev.n - later.n} ticks`);
+  await a.close();
+});
+
+test('an input is acknowledged only once its build order has been tried, even when several arrive together', async (t) => {
+  const cells = [];
+  const { port } = await withServer(t, {
+    newGame(seed) {
+      const g = createGame(seed), me = g.heroes[AMBER_DART];
+      for (const h of g.heroes) if (h.team === 0 && h !== me) h.out = true; // nobody else builds for Amber or spends its Scrap
+      g.teams[0].scrap = 1000;
+      const cx = Math.floor(me.x / CELL), cy = Math.floor(me.y / CELL);
+      for (let dy = -6; dy <= 6 && cells.length < 6; dy++) for (let dx = -6; dx <= 6 && cells.length < 6; dx++) if (canBuild(g, AMBER_DART, 'wall', cx + dx, cy + dy) === null) cells.push({ cx: cx + dx, cy: cy + dy });
+      return g;
+    },
+  });
+  const a = await connect(port);
+  a.send({ t: 'join', slot: AMBER_DART });
+  await a.next(isState, 'a state');
+  cells.forEach((c, k) => a.send({ t: 'input', mx: 0, my: 0, seq: k + 1, build: { type: 'wall', ...c } })); // six at once: they queue, one a tick
+  await a.next((m) => isState(m) && m.acks[AMBER_DART] === 6, 'all six to be acknowledged');
+  const states = a.inbox.filter(isState);
+  for (const m of states) {
+    const standing = cells.filter((c) => m.s.structs.some((st) => st.cx === c.cx && st.cy === c.cy && st.type === 'wall')).length;
+    assert.ok(standing >= m.acks[AMBER_DART], `acknowledged ${m.acks[AMBER_DART]} with only ${standing} built`);
+  }
+  assert.ok(states.every((m, k) => !k || m.acks[AMBER_DART] >= states[k - 1].acks[AMBER_DART]), 'and it never runs backwards');
   await a.close();
 });
 

@@ -152,33 +152,36 @@ export function createGunPredictor(patience = 1000, grace = 50) {
 
 /**
  * Structures this player has just ordered, shown at once while the server's answer is on its way.
- * place() adds one. heard() is shown the newest snapshot's structures: an order whose cell is
- * now built on is paid for, one still unanswered after `patience` ms was refused and is dropped,
- * and so is a paid one whose structure is already gone again. shown() is given the structures
+ * place() adds one. heard() is shown the newest snapshot's structures and the last of our inputs
+ * the server has acted on: an order whose structure (same cell, team and type) now stands is paid
+ * for; one the server has acted on without building it was refused and is dropped at once, as is
+ * one still unanswered after `patience` ms (a lost connection) and a paid one whose structure is
+ * already gone again. shown() is given the structures
  * being drawn (a little behind the newest), and drops each paid order once they include it, so
  * the stand-in hands over to the real thing without a gap.
  */
 export function createBuildPredictor(patience = 1000) {
   let orders = [];
-  const at = (list, o) => list.some((st) => st.cx === o.cx && st.cy === o.cy);
+  const at = (list, o) => list.some((st) => st.cx === o.cx && st.cy === o.cy && st.team === o.team && st.type === o.type);
   return {
     list: () => orders,
-    /** o: a structure-shaped object (type, team, cx, cy, ...) with its cost in Scrap. */
+    /** o: a structure-shaped object (type, team, cx, cy, ...) with its cost in Scrap and the seq of the input that orders it. */
     place(o, now) {
       orders.push({ ...o, paid: false, until: now + patience });
     },
-    heard(structs, now) {
+    /** ack: the last of our inputs the server has acted on (the snapshot's acks entry for our slot). */
+    heard(structs, now, ack = -1) {
       orders = orders.filter((o) => {
         const built = at(structs, o);
         if (o.paid && !built) return false; // built, and destroyed or removed before the picture ever showed it
         o.paid = built;
-        return built || o.until > now;
+        return built || (!(ack >= o.seq) && o.until > now); // acted on and not built: refused, so its Scrap and its picture go back now
       });
     },
     shown(structs) {
       orders = orders.filter((o) => !(o.paid && at(structs, o)));
     },
-    has: (cx, cy) => at(orders, { cx, cy }),
+    has: (cx, cy) => orders.some((o) => o.cx === cx && o.cy === cy),
     /** Scrap promised to orders the server has not yet charged for. */
     cost: () => orders.reduce((t, o) => t + (o.paid ? 0 : o.cost), 0),
   };
@@ -187,15 +190,16 @@ export function createBuildPredictor(patience = 1000) {
 /**
  * This player's own ability bursts, shown the moment the key is pressed. cast() adds a local
  * burst; heard() is shown each snapshot's effects and hides the server's copy of each burst
- * when it arrives: the first new effect of that kind, from our team, near where we cast it.
- * patience: ms we wait for that copy. reach: how near counts.
+ * when it arrives: the first new effect of that kind with our hero's slot as its owner (the sim
+ * puts an owner on the effect of a hero's Q or R, so a teammate's beside us is never taken for ours).
+ * patience: ms we wait for that copy.
  */
-export function createFxPredictor(patience = 1000, reach = 200) {
+export function createFxPredictor(patience = 1000) {
   let local = [], owed = [];
   const hidden = new Map(); // the copies we do not draw, each with the time to forget it
   return {
     list: () => local,
-    /** f: { kind, x, y, r, team }, as the sim's own effects are. */
+    /** f: { kind, x, y, r, team, owner }, as the sim's own effect of a hero's Q or R is. */
     cast(f, now) {
       local.push({ ...f, id: 0, ttl: 0.45 }); // an effect lasts 0.45 s in the sim
       owed.push({ ...f, until: now + patience });
@@ -208,7 +212,7 @@ export function createFxPredictor(patience = 1000, reach = 200) {
     heard(fx, last, now) {
       owed = owed.filter((o) => o.until > now);
       for (const f of fx) {
-        const k = f.id > last ? owed.findIndex((o) => o.kind === f.kind && o.team === f.team && Math.hypot(o.x - f.x, o.y - f.y) < reach) : -1;
+        const k = f.id > last && f.owner !== undefined ? owed.findIndex((o) => o.kind === f.kind && o.owner === f.owner) : -1;
         if (k < 0) continue;
         owed.splice(k, 1);
         hidden.set(f.id, now + patience); // outlasts the effect: the picture runs behind the news, and shows it a little longer

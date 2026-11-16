@@ -23,12 +23,19 @@ function readInput(m, seat) {
   seat.held = { mx: clamp(num(m.mx), -1, 1), my: clamp(num(m.my), -1, 1), aim: num(m.aim), fire: m.fire === true, use: m.use === true };
   if (m.q === true) seat.q = true;
   if (m.r === true) seat.r = true;
-  if (Number.isSafeInteger(m.seq) && m.seq > 0) seat.seq = m.seq; // echoed in snapshots so the client can tell lag from error
+  if (Number.isSafeInteger(m.seq) && m.seq > 0) seat.seq = m.seq; // acknowledged in snapshots (see acked) so the client can tell lag from error
   if (seat.orders.length >= 32) return;
   const build = cell(m.build), remove = cell(m.remove);
-  if (build && typeof m.build.type === 'string' && Object.hasOwn(STRUCTS, m.build.type)) seat.orders.push({ build: { type: m.build.type, ...build } });
-  if (remove) seat.orders.push({ remove });
+  if (build && typeof m.build.type === 'string' && Object.hasOwn(STRUCTS, m.build.type)) seat.orders.push({ seq: seat.seq, build: { type: m.build.type, ...build } });
+  if (remove) seat.orders.push({ seq: seat.seq, remove });
 }
+
+/**
+ * The last input of this seat's that the sim has acted on in full. Held keys, Q and R are taken up by the very next
+ * tick, but orders wait their turn at one a tick, so an input is not done until its orders have left the queue.
+ * A client seeing its order acknowledged and no structure there knows it was refused.
+ */
+const acked = (seat) => (seat.orders.length ? seat.orders[0].seq - 1 : seat.seq);
 
 /** Test aid: hold each message back as a slow, uneven line would. Order is kept, as TCP keeps it. */
 function slowLine(ms, jitter) {
@@ -177,7 +184,7 @@ export async function startServer({
       if (++ticks % 2 === 0) send30 = true;
     }
     if (!send30) return;
-    const acks = Array.from({ length: SLOTS }, (_, i) => seats.get(i)?.seq ?? 0);
+    const acks = Array.from({ length: SLOTS }, (_, i) => (seats.has(i) ? acked(seats.get(i)) : 0));
     const msg = `{"t":"state","n":${ticks},"acks":${JSON.stringify(acks)},"humans":${JSON.stringify(humans())},"s":${snapshot(game)}}`;
     for (const ws of wss.clients) if (ws.bufferedAmount < 1e6) post(ws, msg); // skip clients that cannot keep up
   }, 8);

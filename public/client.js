@@ -31,8 +31,8 @@ const me = createPredictor(); // this player's hero, predicted locally
 const gun = createGunPredictor(), builder = createBuildPredictor(); // and its shots and the structures it orders
 let firing = false; // what we last told the server about the trigger
 const spells = createFxPredictor(); // the bursts of our own Q and R
-let qAt = -1e9, rAt = -1e9; // when we last showed our own Q and R ahead of the server (ms)
-const fresh = (at) => performance.now() - at < 1000; // still waiting for the server's word on it
+let qAt = -1e9, rAt = -1e9, qSeq = 0, rSeq = 0; // when we last showed our own Q and R ahead of the server (ms), and the inputs that carried them
+const fresh = (at) => performance.now() - at < 1000; // still waiting for the server's word on it (a second at most, if the line has died)
 const keys = new Set();
 const mouse = { x: innerWidth / 2, y: innerHeight / 2, wx: 0, wy: 0, left: false, right: false };
 const seen = { phase: '', wave: -1, alive: [true, true, true] };
@@ -76,7 +76,10 @@ function connect() {
       if (snaps.length > 30) snaps.shift();
       if (slot >= 0 && m.s.heroes[slot].alive) me.heard(m.acks[slot], m.s.heroes[slot]);
       if (slot >= 0) gun.heard(m.s.shots, slot, m.s.nextId - 1, performance.now()); // not while watching: Turret and AI shots have owner -1
-      builder.heard(m.s.structs, performance.now());
+      const ack = m.acks[slot] ?? -1; // the last of our inputs the server has acted on
+      builder.heard(m.s.structs, performance.now(), ack);
+      if (ack >= qSeq) qAt = -1e9; // its word on our Q is in this snapshot, spent or refused: stop standing in for it
+      if (ack >= rSeq) rAt = -1e9;
       spells.heard(m.s.fx, heard.id, performance.now());
       hear(m.s);
       onState(m.s);
@@ -398,15 +401,17 @@ function sendInput(extra) {
 function cast({ q, r }, mx, my) {
   const h = latest?.heroes[slot], now = performance.now();
   if (!h || !me.known || ws.readyState !== 1 || latest.phase === 'over') return;
-  const d = HEROES[h.kind], at = { x: me.x, y: me.y, team: h.team };
+  const d = HEROES[h.kind], at = { x: me.x, y: me.y, team: h.team, owner: slot };
   if (r && canCast(latest, h, 'r') && !fresh(rAt)) {
     rAt = now;
+    rSeq = seq + 1; // the input about to go out
     spells.cast({ kind: 'ult', r: 70, ...at }, now);
     sound.play(FX_SOUND.ult);
   }
   const kind = { anvil: 'ring', dart: 'dash', patch: 'heal', forge: 'fix' }[h.kind]; // Cog's Sentry has no burst
   if (!q || !kind || fresh(qAt) || !canCast(latest, { ...h, ...at }, 'q')) return; // asked of where we stand now, not where the server last saw us
   qAt = now;
+  qSeq = seq + 1;
   spells.cast({ kind, r: d.q.r ?? 22, ...at }, now);
   sound.play(FX_SOUND[kind]);
   if (h.kind === 'dart') {
@@ -422,12 +427,12 @@ function mayBuild(type, cx, cy) {
   return why === null && latest.teams[h.team].scrap - builder.cost() < buildCost(h.kind, type) ? 'scrap' : why;
 }
 
-/** Order a structure and show it at once. The server's answer confirms it or, within a second, takes it away again. */
+/** Order a structure and show it at once. The server's answer, a round trip later, confirms it or takes it away again. */
 function place(type, cx, cy) {
   const h = latest.heroes[slot], hp = STRUCTS[type].hp;
-  builder.place({ type, team: h.team, cx, cy, x: cx * CELL + CELL / 2, y: cy * CELL + CELL / 2, hp, max: hp, aim: 0, ttl: 0, wait: STRUCTS[type].buildTime ?? 0, cost: buildCost(h.kind, type) }, performance.now());
-  sound.play('Build', 0.7);
   sendInput({ build: { type, cx, cy } });
+  builder.place({ type, team: h.team, cx, cy, seq, x: cx * CELL + CELL / 2, y: cy * CELL + CELL / 2, hp, max: hp, aim: 0, ttl: 0, wait: STRUCTS[type].buildTime ?? 0, cost: buildCost(h.kind, type) }, performance.now());
+  sound.play('Build', 0.7);
 }
 
 function setBuild(type) {
