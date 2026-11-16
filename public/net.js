@@ -153,7 +153,7 @@ export function createGunPredictor(patience = 1000, grace = 50) {
 /**
  * Structures this player has just ordered, shown at once while the server's answer is on its way.
  * place() adds one. heard() is shown the newest snapshot's structures and the last of our inputs
- * the server has acted on: an order whose structure (same cell, team and type) now stands is paid
+ * whose orders the server has tried (the snapshot's `done`): an order whose structure (same cell, team and type) now stands is paid
  * for; one the server has acted on without building it was refused and is dropped at once, as is
  * one still unanswered after `patience` ms (a lost connection) and a paid one whose structure is
  * already gone again. shown() is given the structures
@@ -169,13 +169,13 @@ export function createBuildPredictor(patience = 1000) {
     place(o, now) {
       orders.push({ ...o, paid: false, until: now + patience });
     },
-    /** ack: the last of our inputs the server has acted on (the snapshot's acks entry for our slot). */
-    heard(structs, now, ack = -1) {
+    /** done: the last of our inputs whose orders the server has tried (the snapshot's `done` entry for our slot). */
+    heard(structs, now, done = -1) {
       orders = orders.filter((o) => {
         const built = at(structs, o);
         if (o.paid && !built) return false; // built, and destroyed or removed before the picture ever showed it
         o.paid = built;
-        return built || (!(ack >= o.seq) && o.until > now); // acted on and not built: refused, so its Scrap and its picture go back now
+        return built || (!(done >= o.seq) && o.until > now); // tried and not built: refused, so its Scrap and its picture go back now
       });
     },
     shown(structs) {

@@ -244,7 +244,7 @@ test('each snapshot carries the server tick and the last input heard from every 
   await a.close();
 });
 
-test('an input is acknowledged only once its build order has been tried, even when several arrive together', async (t) => {
+test('an input is marked done only once its build order has been tried, even when several arrive together', async (t) => {
   const cells = [];
   const { port } = await withServer(t, {
     newGame(seed) {
@@ -260,13 +260,15 @@ test('an input is acknowledged only once its build order has been tried, even wh
   a.send({ t: 'join', slot: AMBER_DART });
   await a.next(isState, 'a state');
   cells.forEach((c, k) => a.send({ t: 'input', mx: 0, my: 0, seq: k + 1, build: { type: 'wall', ...c } })); // six at once: they queue, one a tick
-  await a.next((m) => isState(m) && m.acks[AMBER_DART] === 6, 'all six to be acknowledged');
+  await a.next((m) => isState(m) && m.done[AMBER_DART] === 6, 'all six to be done');
   const states = a.inbox.filter(isState);
   for (const m of states) {
     const standing = cells.filter((c) => m.s.structs.some((st) => st.cx === c.cx && st.cy === c.cy && st.type === 'wall')).length;
-    assert.ok(standing >= m.acks[AMBER_DART], `acknowledged ${m.acks[AMBER_DART]} with only ${standing} built`);
+    assert.ok(standing >= m.done[AMBER_DART], `done to ${m.done[AMBER_DART]} with only ${standing} built`);
+    assert.ok(m.acks[AMBER_DART] >= m.done[AMBER_DART], 'what is done has been heard');
   }
-  assert.ok(states.every((m, k) => !k || m.acks[AMBER_DART] >= states[k - 1].acks[AMBER_DART]), 'and it never runs backwards');
+  assert.ok(states.some((m) => m.acks[AMBER_DART] > m.done[AMBER_DART]), 'the ack itself does not wait for the queue: movement prediction goes by it');
+  assert.ok(states.every((m, k) => !k || m.done[AMBER_DART] >= states[k - 1].done[AMBER_DART]), 'and it never runs backwards');
   await a.close();
 });
 

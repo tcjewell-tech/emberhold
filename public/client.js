@@ -77,10 +77,9 @@ function connect() {
       if (snaps.length > 30) snaps.shift();
       if (slot >= 0 && m.s.heroes[slot].alive) me.heard(m.acks[slot], m.s.heroes[slot]);
       if (slot >= 0) gun.heard(m.s.shots, slot, m.s.nextId - 1, performance.now()); // not while watching: Turret and AI shots have owner -1
-      const ack = m.acks[slot] ?? -1; // the last of our inputs the server has acted on
-      builder.heard(m.s.structs, performance.now(), ack);
-      if (ack >= qSeq) qAt = -1e9; // its word on our Q is in this snapshot, spent or refused: stop standing in for it
-      if (ack >= rSeq) rAt = -1e9;
+      builder.heard(m.s.structs, performance.now(), m.done[slot] ?? -1); // done: the last of our inputs whose orders the server has tried
+      if (m.acks[slot] >= qSeq) qAt = -1e9; // its word on our Q is in this snapshot, spent or refused: stop standing in for it
+      if (m.acks[slot] >= rSeq) rAt = -1e9;
       spells.heard(m.s.fx, heard.id, performance.now());
       hear(m.s);
       onState(m.s);
