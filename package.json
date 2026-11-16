@@ -8,7 +8,8 @@
     "start": "node server.js",
     "lan": "node server.js --lan",
     "test": "node --test \"test/*.test.js\"",
-    "balance": "node test/balance.test.js 60"
+    "balance": "node test/balance.test.js 60",
+    "balance:endless": "node test/balance.test.js endless 12"
   },
   "dependencies": {
     "ws": "^8.22.2"

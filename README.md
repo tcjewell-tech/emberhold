@@ -86,6 +86,7 @@ and Shield Generators around it; **Aegis** (R) halves the damage your whole team
 | F (hold) | Scavenge a wreck for Scrap |
 | 1 2 3 4 | Build Wall / Turret / Spikes / Shield Generator: left-click places (drag to paint), right-click removes, Esc stops |
 | Tab (hold) | Scoreboard |
+| Q / E, Space or left-click (once your Ember is lost) | Follow the previous / next Ember or hero still in the match; W A S D flies the camera freely again |
 | M | Sound on or off |
 
 ## Test
@@ -93,10 +94,13 @@ and Shield Generators around it; **Aegis** (R) halves the damage your whole team
 ```bash
 npm test
 npm run balance
+npm run balance:endless
 ```
 
 `npm run balance` plays 60 bot-only matches and reports each hero's damage, kills and deaths
 beside the lineup's average, failing if a hero strays too far from it.
+`npm run balance:endless` plays 12 endless matches and reports how many nights they last, how long
+the last Ember stands alone, and the numbers of the team that was last standing.
 
 `public/sim.js` holds every rule and runs headless; `public/bots.js` plays the bot heroes;
 `server.js` runs the one authoritative match; `public/client.js` only sends input and draws;

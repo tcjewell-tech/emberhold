@@ -27,6 +27,7 @@ let ws, slot = -1, lobby = null, latest = null, humans = [], seq = 0, timeline =
 const key = crypto.getRandomValues(new Uint32Array(4)).join('-'); // proves a reconnecting player is the one who held the seat
 const snaps = []; // recent snapshots, each with the server time (ms) it shows
 const cam = { x: WORLD.w / 2, y: WORLD.h / 2, scale: 1 };
+let watch = -1; // once our Ember is lost: the hero slot the camera follows, 100 + team for that team's Ember, or -1 to fly free
 const me = createPredictor(); // this player's hero, predicted locally
 const gun = createGunPredictor(), builder = createBuildPredictor(); // and its shots and the structures it orders
 let firing = false; // what we last told the server about the trigger
@@ -272,7 +273,7 @@ function onState(s) {
     else if (s.phase === 'day') say(`Day ${s.wave + 1}: scavenge, build, raid`);
   }
   s.teams.forEach((T, k) => {
-    if (!T.alive && seen.alive[k]) say(k === team ? 'Your Ember is lost. WASD moves the camera.' : `Team ${TEAMS[k].name} has fallen`);
+    if (!T.alive && seen.alive[k]) say(k !== team ? `Team ${TEAMS[k].name} has fallen` : touch.used ? 'Your Ember is lost. Tap Q or R to follow the survivors.' : 'Your Ember is lost. Q and E follow the survivors, WASD flies the camera.');
     seen.alive[k] = T.alive;
   });
   const left = s.teams.filter((T) => T.alive).length;
@@ -435,6 +436,17 @@ function place(type, cx, cy) {
   sound.play('Build', 0.7);
 }
 
+/** Our Ember is lost: send the camera to the next (dir 1) or the one before (-1) of the Embers and heroes still in the match. */
+function spectate(dir) {
+  if (!latest?.heroes[slot]?.out || latest.phase === 'over') return false;
+  const list = latest.teams.flatMap((T, t) => (T.alive ? [100 + t, ...latest.heroes.filter((o) => o.team === t).map((o) => o.i)] : []));
+  if (!list.length) return false;
+  const k = list.indexOf(watch);
+  watch = list[k < 0 ? (dir > 0 ? 0 : list.length - 1) : (k + dir + list.length) % list.length];
+  say(watch >= 100 ? `Watching Team ${TEAMS[watch - 100].name}'s Ember` : `Watching ${TEAMS[teamOf(watch)].name} ${HEROES[latest.heroes[watch].kind].name} (${who(watch).toLowerCase()})`);
+  return true;
+}
+
 function setBuild(type) {
   buildType = type;
   ghostWhy = null;
@@ -464,6 +476,8 @@ addEventListener('keydown', (e) => {
   if (e.repeat) return;
   keys.add(e.code);
   if (e.code === 'KeyM') say(sound.toggle() ? 'Sound off' : 'Sound on'), showSettings();
+  if (e.code === 'KeyQ') spectate(-1);
+  else if ((e.code === 'KeyE' || e.code === 'Space') && spectate(1)) e.preventDefault();
   if (e.code === 'Escape') setBuild(null);
   else if (/^Digit[1-9]$/.test(e.code)) {
     const type = Object.keys(STRUCTS)[e.code.at(-1) - 1]; // 1 Wall, 2 Turret, 3 Spikes, 4 Shield: the build bar's order
@@ -498,6 +512,7 @@ canvas.addEventListener('mousedown', (e) => {
   if (e.button === 2) mouse.right = true;
   lastOrder = '';
   order();
+  if (e.button === 0 && !touch.used) spectate(1);
   sendInput();
 });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -519,8 +534,8 @@ const touch = createTouch(canvas, {
 });
 if (matchMedia('(pointer: coarse)').matches) document.body.classList.add('touch');
 // These answer the press itself, not a click: a phone makes no click from a second finger while a thumb is steering.
-$('q').onpointerdown = () => sendInput({ q: true });
-$('r').onpointerdown = () => sendInput({ r: true });
+$('q').onpointerdown = () => spectate(1) || sendInput({ q: true });
+$('r').onpointerdown = () => spectate(-1) || sendInput({ r: true });
 $('rm').onpointerdown = () => $('rm').classList.toggle('on', (removing = !removing));
 for (const b of $('build').querySelectorAll('button[data-type]')) {
   b.onclick = () => setBuild(buildType === b.dataset.type ? null : b.dataset.type);
@@ -593,10 +608,12 @@ setInterval(sendInput, 33);
 
 const toWorld = (px, py) => ({ x: cam.x + (px - innerWidth / 2) / cam.scale, y: cam.y + (py - innerHeight / 2) / cam.scale });
 
-function follow(dt) {
+/** s: the state being drawn, where anything the camera follows is found. */
+function follow(dt, s) {
   const h = slot >= 0 ? latest.heroes[slot] : null;
   const [mx, my] = moveVec();
   if (h && h.alive) {
+    watch = -1;
     if (!me.known) me.place(h);
     else {
       // Walk by the sim's own rule, so rival Walls stop the prediction just as they stop the server.
@@ -610,8 +627,11 @@ function follow(dt) {
   } else {
     me.known = false;
     if (!h || h.out) {
-      cam.x += mx * 900 * dt; // spectating: WASD flies the camera
-      cam.y += my * 900 * dt;
+      // Spectating: the camera follows what spectate() chose until WASD takes it back, or that team falls too.
+      const o = watch < 0 || mx || my ? null : watch >= 100 ? s.teams[watch - 100].alive && s.teams[watch - 100].ember : !s.heroes[watch].out && s.heroes[watch];
+      if (!o) watch = -1;
+      cam.x = o ? o.x : cam.x + mx * 900 * dt;
+      cam.y = o ? o.y : cam.y + my * 900 * dt;
     }
   }
   cam.scale = zoom * PX;
@@ -749,8 +769,8 @@ function frame(now) {
   const at = timeline.at(now);
   let k = snaps.length - 1;
   while (k > 0 && snaps[k].at > at) k--;
-  const a = snaps[k], b = snaps[k + 1];
-  follow(dt);
+  const a = snaps[k], b = snaps[k + 1], shown = b ? interpolate(a.s, b.s, (at - a.at) / (b.at - a.at)) : a.s;
+  follow(dt, shown);
   if (slot >= 0) { // our own gun fires on screen at once; the server's copies of those shots are hidden when they arrive
     const h = latest.heroes[slot], can = firing && h.alive && me.known && !(h.stun > 0) && latest.phase !== 'over';
     const from = can ? { x: me.x, y: me.y, aim: me.aim, team: h.team } : null, def = HEROES[h.kind];
@@ -766,7 +786,7 @@ function frame(now) {
   }
   for (let k = sparks.length - 1; k >= 0; k--) if (sparks[k].t <= 0) sparks.splice(k, 1);
   shake = shake < 0.4 ? 0 : shake * 0.5 ** (dt / 0.12); // halves every 120 ms
-  draw(b ? interpolate(a.s, b.s, (at - a.at) / (b.at - a.at)) : a.s, now);
+  draw(shown, now);
   if (slot >= 0 && (mouse.left || mouse.right)) order(); // the hero may have walked a new cell under a held cursor
 }
 
