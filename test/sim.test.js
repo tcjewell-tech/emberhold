@@ -284,6 +284,14 @@ test('Dash blinks Dart along its movement, but not through a rival Wall', () => 
   assert.ok(h2.x < 1880);
 });
 
+test('a tiny move does not stretch Dash beyond its distance', () => {
+  const g = arena();
+  const h = place(g.heroes[AMBER + DART], MID.x, MID.y);
+  run(g, DT, { [AMBER + DART]: { mx: 5e-324, my: 5e-324, q: true } });
+  const went = gap(h, MID);
+  assert.ok(Math.abs(went - S.HEROES.dart.q.dist) < 5, `went ${went}`);
+});
+
 test('Mend heals teammates in range up to full health, and nobody else', () => {
   const g = arena();
   const patch = place(g.heroes[AMBER + PATCH], MID.x, MID.y);

@@ -325,6 +325,32 @@ test('a connection that has gone silent is dropped', async (t) => {
   assert.ok(performance.now() - started >= 90, 'not before it had a chance to answer');
 });
 
+test('an aim far beyond a full turn is wrapped to the same bearing', async (t) => {
+  const { port } = await withServer(t);
+  const a = await connect(port);
+  a.send({ t: 'join', slot: AMBER_DART });
+  await a.next((m) => m.t === 'joined', 'joined');
+  const big = 2 ** 52 + 7;
+  const before = (await a.next(isState, 'a state')).s;
+  a.send({ t: 'input', aim: big });
+  const { aim } = (await a.next(stateAfter(before.t + 0.2), 'the aim to land')).s.heroes[AMBER_DART];
+  assert.ok(Math.abs(aim) <= Math.PI + 0.01, `aim ${aim}`);
+  assert.ok(Math.abs(Math.sin(aim) - Math.sin(big)) < 0.01 && Math.abs(Math.cos(aim) - Math.cos(big)) < 0.01, 'same bearing');
+  await a.close();
+});
+
+test('a page from another site cannot open a connection; the game\'s own page can', async (t) => {
+  const { port } = await withServer(t);
+  const opens = (origin) => new Promise((resolve) => {
+    const ws = new WS(`ws://127.0.0.1:${port}`, { origin });
+    ws.on('open', () => (ws.close(), resolve(true)));
+    ws.on('error', () => resolve(false));
+  });
+  assert.equal(await opens('https://evil.example'), false);
+  assert.equal(await opens('null'), false);
+  assert.equal(await opens(`http://127.0.0.1:${port}`), true);
+});
+
 test('a full server turns newcomers away; a flooding connection is cut off', async (t) => {
   const { port } = await withServer(t, { maxClients: 2 });
   const a = await connect(port), b = await connect(port);

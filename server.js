@@ -16,11 +16,13 @@ const SLOTS = TEAMS.length * TEAM_SIZE;
 const FLOOD = 1000; // messages one connection may send per heartbeat; a real client sends about 150
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const num = (v) => (Number.isFinite(v) ? v : 0);
+// An aim of 2^52 or more is the same bearing, but the gun's spread is too small to change it there: wrap it first.
+const angle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const cell = (c) => (c && Number.isInteger(c.cx) && Number.isInteger(c.cy) ? { cx: c.cx, cy: c.cy } : null);
 
 /** Everything a client sends is untrusted: rebuild its input from scratch with known types. */
 function readInput(m, seat) {
-  seat.held = { mx: clamp(num(m.mx), -1, 1), my: clamp(num(m.my), -1, 1), aim: num(m.aim), fire: m.fire === true, use: m.use === true };
+  seat.held = { mx: clamp(num(m.mx), -1, 1), my: clamp(num(m.my), -1, 1), aim: angle(num(m.aim)), fire: m.fire === true, use: m.use === true };
   if (m.q === true) seat.q = true;
   if (m.r === true) seat.r = true;
   if (Number.isSafeInteger(m.seq) && m.seq > 0) seat.seq = m.seq; // echoed in snapshots so the client can tell lag from error
@@ -37,6 +39,20 @@ function readInput(m, seat) {
  * it was refused.
  */
 const doneTo = (seat) => (seat.orders.length ? seat.orders[0].seq - 1 : seat.seq);
+
+/**
+ * A browser names the page that opened a WebSocket in its Origin header and lets any page open one, so without
+ * this a site the player visits could join, flood or restart a match bound to this computer. No Origin is a
+ * non-browser client (a test), which the bind already decides about. Does not stop DNS rebinding.
+ */
+function sameSite({ origin, req }) {
+  if (!origin) return true;
+  try {
+    return new URL(origin).host === String(req.headers.host).toLowerCase();
+  } catch {
+    return false; // e.g. "null" from a file:// page
+  }
+}
 
 /** Test aid: hold each message back as a slow, uneven line would. Order is kept, as TCP keeps it. */
 function slowLine(ms, jitter) {
@@ -77,7 +93,7 @@ export async function startServer({
   // Snapshots are the whole state as JSON. Each one is nearly the same as the last, so one
   // deflate stream per player takes about 650 KB/s down to about 25. It is done here rather than
   // by the WebSocket's own compression, which some hosts' proxies strip (Render's does).
-  const wss = new WebSocketServer({ server: http, maxPayload: 2048 });
+  const wss = new WebSocketServer({ server: http, maxPayload: 2048, verifyClient: sameSite });
   const humans = () => Array.from({ length: SLOTS }, (_, i) => seats.has(i));
   const post = (ws, text) => ws.down(() => {
     if (ws.readyState !== 1) return;

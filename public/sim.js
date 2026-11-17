@@ -450,13 +450,9 @@ function tryRemove(s, h, r) {
 
 /** Dart's Dash: a blink the way it is moving (the way it aims, if standing still). The client runs this too, to predict its own. */
 export function dash(s, h, mx, my) {
-  let ux = mx, uy = my;
-  if (!ux && !uy) {
-    ux = Math.cos(h.aim);
-    uy = Math.sin(h.aim);
-  }
-  const len = Math.hypot(ux, uy), hop = HEROES.dart.q.dist / 10;
-  for (let k = 0; k < 10; k++) moveHero(s, h, (ux / len) * hop, (uy / len) * hop); // small hops so a rival Wall stops it
+  // An angle, not mx / length: for a tiny move such as 5e-324 the length rounds off and the blink comes out 41% long.
+  const a = mx || my ? Math.atan2(my, mx) : h.aim, hop = HEROES.dart.q.dist / 10;
+  for (let k = 0; k < 10; k++) moveHero(s, h, Math.cos(a) * hop, Math.sin(a) * hop); // small hops so a rival Wall stops it
 }
 
 // The client reads the next three too, to predict its own hero by the same rules.
