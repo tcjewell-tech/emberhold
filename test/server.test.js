@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
+import http from 'node:http';
+import { hostname } from 'node:os';
 import WS from 'ws';
 import { startServer } from '../server.js';
 import { createUnpacker } from '../public/net.js';
@@ -317,7 +319,7 @@ test('a connection that has gone silent is dropped', async (t) => {
   sock.on('error', () => {});
   sock.resume(); // read and discard, or the close would never be noticed
   const started = performance.now();
-  sock.write('GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n');
+  sock.write('GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n');
   await new Promise((resolve, reject) => {
     sock.on('close', resolve);
     setTimeout(() => reject(new Error('still connected after 2 s')), 2000).unref();
@@ -349,6 +351,32 @@ test('a page from another site cannot open a connection; the game\'s own page ca
   assert.equal(await opens('https://evil.example'), false);
   assert.equal(await opens('null'), false);
   assert.equal(await opens(`http://127.0.0.1:${port}`), true);
+});
+
+test('a site whose name is pointed at this computer is refused; its addresses and own names are not', async (t) => {
+  const { port } = await withServer(t);
+  const page = (host) => new Promise((resolve, reject) =>
+    http.get({ port, host: '127.0.0.1', path: '/', headers: { host } }, (res) => (res.resume(), resolve(res.statusCode))).on('error', reject));
+  // A rebound page's socket names the site both as Host and as Origin, so the Origin check alone lets it in.
+  const opens = (host, options = {}) => new Promise((resolve) => {
+    const ws = new WS(`ws://127.0.0.1:${port}`, { origin: `http://${host}`, headers: { host }, ...options });
+    ws.on('open', () => (ws.close(), resolve(true)));
+    ws.on('error', () => resolve(false));
+  });
+  for (const host of [`evil.example:${port}`, `127.0.0.1.evil.example:${port}`, `${hostname()}.evil.example`]) {
+    assert.equal(await page(host), 403, host);
+    assert.equal(await opens(host), false, host);
+  }
+  for (const host of [`localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`, `192.168.1.20:${port}`, `${hostname()}:${port}`, `${hostname()}.local:${port}`]) {
+    assert.equal(await page(host), 200, host);
+    assert.equal(await opens(host), true, host);
+  }
+});
+
+test('a public host serves any name', async (t) => {
+  const { port } = await withServer(t, { anyHost: true });
+  const ws = new WS(`ws://127.0.0.1:${port}`, { origin: 'https://emberhold.example', headers: { host: 'emberhold.example' } });
+  assert.equal(await new Promise((resolve) => (ws.on('open', () => (ws.close(), resolve(true))), ws.on('error', () => resolve(false)))), true);
 });
 
 test('a full server turns newcomers away; a flooding connection is cut off', async (t) => {

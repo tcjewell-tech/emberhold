@@ -38,6 +38,9 @@ The server has to run somewhere the other players can reach. Start it with `npm 
 which listens on every network interface, on the port in the `PORT` environment variable or
 3000. Served over HTTPS, the page switches to a secure WebSocket by itself.
 
+Players reach the server by its IP address or the computer's own name. On a host they reach by
+a domain name, start it with `npm run lan -- --any-host` (on Render this is automatic).
+
 Anyone who has the address can join, and there is one match per server.
 
 To feel what a slow connection is like before you put it online:
