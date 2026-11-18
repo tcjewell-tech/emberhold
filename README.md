@@ -67,6 +67,27 @@ them more often; the Colossus always does.
 
 The arena is round, ringed by water.
 
+## Eclipses
+
+Every third night falls under an Eclipse, named in the banner at dusk and at the top of the
+screen. It lasts until dawn, and no two in a row are the same. In endless mode they also come
+every second night from night 12.
+
+| Eclipse | What it does |
+|---|---|
+| Blood Moon | AI enemies move 25% faster and notice heroes from 60% further off |
+| Iron Tide | Twice the Breakers, and AI enemies do 25% more damage to structures (not to Embers) |
+| Ash Storm | Turrets and Sentries see three quarters as far, and AI enemies arrive with a 35-point shield |
+| Volatile | An AI enemy bursts when it dies: 28 damage to heroes, structures and other AI enemies within 75 units (not to Embers), and it pays 1 more Scrap |
+
+## The Core
+
+From the second day, a Core appears in the middle of the map 12 seconds into each day. Stand a
+hero in its ring with no rival there and it fills in 6 seconds; with two teams in the ring it
+freezes, and a team arriving alone must first run down what a rival put in. The team that
+takes it gets 45 Scrap, 120 health back on its Ember, and 35% Ultimate charge and 6 seconds
+of Rush for each of its living heroes. It goes at dusk if nobody has taken it.
+
 ## Base alarm
 
 When your own Ember is hit, its bar at the top of the screen is outlined in red for a moment.

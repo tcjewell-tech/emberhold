@@ -1,7 +1,7 @@
 // Emberhold's pixel art, drawn in code: no image files. Everything here works in art pixels
 // (one art pixel is two world units; the page scales the small canvas up with hard edges).
 // Sprites are painted once on their own little canvas, outlined, and cached.
-import { TEAMS, WORLD, CELL, ARENA, STRUCTS, inArena } from './sim.js';
+import { TEAMS, WORLD, CELL, ARENA, STRUCTS, CORE_DEF, ECLIPSES, inArena } from './sim.js';
 
 export const PX = 0.5; // art pixels per world unit
 export const TILE = CELL * PX;
@@ -197,6 +197,7 @@ export function createArt(g) {
       shadow(x, y, (c.width * scale) / 2.4);
       put(c, x, y + 2, scale);
       if (e.hp < e.max) meter(x - 9 * scale, y - c.height * scale - 3, 18 * scale, e.hp / e.max, '#e58cff', big ? 3 : 2);
+      if (e.shield) meter(x - 9 * scale, y - c.height * scale - (big ? 7 : 6), 18 * scale, e.shield / ECLIPSES.ash_storm.shield, '#bfe9ff', 2); // an Ash Storm's shield, over the health it guards
     },
     /** Eyes that show through the dark. */
     eyes(e, x, y) {
@@ -257,6 +258,22 @@ export function createArt(g) {
       this.glow(cx, cy - 8, 14, T, 0.45);
       if (st.hp < st.max) meter(x + 2, y + 21, 16, st.hp / st.max, T, 2);
     },
+    /** The Core's ground: a faint disc and a dotted rim, and over the rim an arc of how far the holder has got (frac of the way round, from the top). */
+    coreRing(x, y, frac, col, t) {
+      const r = CORE_DEF.radius * PX;
+      g.globalAlpha = 0.08; S.E(x, y, r, r, col);
+      g.globalAlpha = 0.5; ring(x, y, r, col, { gap: 4, a0: t / 1500 });
+      g.globalAlpha = 1; ring(x, y, r, col, { turn: frac, a0: -Math.PI / 2, thick: 2 });
+    },
+    /** The Core itself: a stone pedestal under a floating gem that glows in the holder's colour. */
+    core(x, y, col, t) {
+      const up = 15 - Math.round(Math.sin(t / 300) * 2);
+      shadow(x, y + 6, 12);
+      S.E(x, y + 3, 11, 5, INK); S.E(x, y + 2, 10, 4, lit(STEEL, -0.35)); S.E(x, y + 1, 10, 3.5, STEEL);
+      S.R(x - 3, y - 6, 6, 8, INK); S.R(x - 2, y - 6, 4, 8, lit(STEEL, 0.2));
+      S.E(x, y - up, 6, 7, INK); S.ball(x, y - up, 5, 6, col);
+      this.glow(x, y - up, 22, col, 0.5);
+    },
     /** A stone bowl with a flame in the team's colour; the flame shrinks as the Ember is hurt. */
     ember(k, x, y, frac, alive, t) {
       const T = TEAMS[k].color, f = Math.floor(t / 100);
@@ -292,11 +309,11 @@ export function createArt(g) {
     /** A burst that grows and fades: f is the effect from the snapshot, r its radius in art pixels. */
     fx(f, x, y, r) {
       const p = Math.max(0, Math.min(1, 1 - f.ttl / 0.45));
-      const col = f.kind === 'heal' ? '#7dffa8' : f.kind === 'down' ? '#ff6b6b' : f.kind === 'scrap' ? '#f2c66d' : f.kind === 'ult' ? '#ffffff' : f.team < 0 ? '#e58cff' : TEAMS[f.team].color;
+      const col = f.kind === 'heal' ? '#7dffa8' : f.kind === 'down' ? '#ff6b6b' : f.kind === 'blast' ? '#ff9a4d' : f.kind === 'scrap' ? '#f2c66d' : f.kind === 'ult' ? '#ffffff' : f.team < 0 ? '#e58cff' : TEAMS[f.team].color;
       const rad = r * (f.kind === 'dash' ? 1 : 0.3 + 0.7 * p) * (f.kind === 'fall' ? 1.6 : 1);
       g.globalAlpha = 1 - p;
       ring(x, y, rad, col, { thick: f.kind === 'fall' ? 4 : 2, gap: p > 0.6 ? 2 : 1 });
-      if (f.kind === 'heal' || f.kind === 'pop') { g.globalAlpha = (1 - p) * 0.25; S.E(x, y, rad, rad, col); }
+      if (f.kind === 'heal' || f.kind === 'pop' || f.kind === 'blast') { g.globalAlpha = (1 - p) * 0.25; S.E(x, y, rad, rad, col); }
       if (f.kind === 'scrap' || f.kind === 'heal') for (let k = 0; k < 5; k++) { g.globalAlpha = 1 - p; S.R(x - 8 + hash(k, f.id) * 16, y - p * 16 - hash(k, 5) * 8, 2, 2, col); }
       g.globalAlpha = 1;
     },

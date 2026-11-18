@@ -48,6 +48,8 @@ test('everything the game can hold has a painter, and each one draws without thr
     drew(`a damaged, upgraded ${type}`, () => art[type]({ ...st, tier: 2, hp: st.max * 0.3, wait: 0 }, 10, 10));
   }
   drew('the upgrade mark', () => art.tier2(10, 10));
+  drew('the Core', () => art.core(80, 80, '#ffd35a', 700));
+  for (const frac of [0, 0.4, 1]) drew(`the Core's ring at ${frac}`, () => art.coreRing(80, 80, frac, '#ffd35a', 700));
   drew('a shield field', () => art.field(g.structs.find((st) => st.type === 'shield'), 10, 10, 500));
   drew('a Sentry', () => art.turret({ ...g.structs.find((st) => st.type === 'turret'), ttl: 5 }, 10, 10));
   for (const a of [0, 1, 2, 3, 4, 5, 6]) drew(`the pointer at angle ${a}`, () => art.pointer(100, 100, a, '#ff6b6b', a * 300));
@@ -56,6 +58,7 @@ test('everything the game can hold has a painter, and each one draws without thr
     const e = spawnEnemy(g, type, 0, 500, 500);
     art.enemy(e, 50, 50, 0); // a sprite, pasted with drawImage: nothing to count
     art.enemy({ ...e, stun: 1 }, 50, 50, 100);
+    drew(`a ${type} with an Ash Storm's shield`, () => art.enemy({ ...e, shield: 20 }, 50, 50, 100));
     drew(`the eyes of a ${type}`, () => art.eyes(e, 50, 50));
   }
   for (const h of g.heroes) {
@@ -67,7 +70,7 @@ test('everything the game can hold has a painter, and each one draws without thr
   for (const kind of Object.keys(POWERUPS)) art.pickup({ kind, ttl: 2 }, 5, 5, 400);
   art.wreck(5, 5);
   drew('a shot', () => art.shot({ vx: 300, vy: 0, team: 0, owner: 1 }, 5, 5));
-  for (const kind of ['ring', 'pop', 'heal', 'down', 'fall', 'power']) art.fx({ kind, team: 0, ttl: 0.2, r: 40 }, 5, 5, 20);
+  for (const kind of ['ring', 'pop', 'heal', 'down', 'fall', 'power', 'blast', 'capture']) art.fx({ kind, team: 0, ttl: 0.2, r: 40 }, 5, 5, 20);
   drew('a spark', () => art.spark({ t: 0.1, life: 0.4, color: '#ffffff', size: 2 }, 5, 5));
   for (const mood of [0, 1, 2]) assert.ok(ground(mood), `mood ${mood} has ground`);
   assert.equal(canvas.width, 0, 'and nothing resized the screen');

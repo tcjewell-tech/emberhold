@@ -207,11 +207,11 @@ test('an Ember shrugs off most hero fire', () => {
 test('destroying a rival Ember pays out and eliminates that team', () => {
   const g = arena();
   const az = g.teams[1];
-  place(g.heroes[AMBER + DART], az.ember.x, az.ember.y + 200); // from the south: no Azure hero stands in that line of fire
+  place(g.heroes[AMBER + DART], az.ember.x, az.ember.y - 200); // from the north: no Azure hero stands in that line of fire
   S.addStruct(g, 'wall', 1, 60, 50);
   az.ember.hp = 20;
   const before = g.teams[0].scrap;
-  run(g, 2, { [AMBER + DART]: { aim: -Math.PI / 2, fire: true } });
+  run(g, 2, { [AMBER + DART]: { aim: Math.PI / 2, fire: true } });
   assert.equal(az.alive, false);
   assert.equal(g.teams[0].scrap, before + S.EMBER_BOUNTY);
   assert.ok(g.heroes.slice(AZURE, AZURE + S.TEAM_SIZE).every((h) => h.out && !h.alive));
@@ -939,4 +939,227 @@ test('an upgraded Turret, Spikes and Shield Generator each do half as much more'
   run(g, 0.2);
   const shot = g.shots.find((sh) => sh.owner === -1 && sh.team === 0);
   assert.equal(shot.dmg, S.STRUCTS.turret.dmg * 1.5, `the Turret (tier ${turret.tier}) hits half as hard again`);
+});
+
+// ---------------------------------------------------------------- Eclipses
+
+test('every third night falls under an Eclipse, never the same one twice running, and it lifts at dawn', () => {
+  const nights = (g, n) => {
+    const seen = [];
+    for (let k = 1; k <= n; k++) {
+      S.startNight(g);
+      seen.push(g.eclipse);
+      g.spawn = [];
+      S.startDay(g);
+      assert.equal(g.eclipse, null, 'dawn lifts it');
+    }
+    return seen;
+  };
+  const seen = nights(arena(7), 36);
+  seen.forEach((id, k) => assert.equal(id !== null, (k + 1) % 3 === 0, `night ${k + 1}`));
+  const had = seen.filter(Boolean);
+  assert.ok(had.every((id) => S.ECLIPSE_IDS.includes(id)));
+  assert.ok(had.every((id, k) => id !== had[k - 1]), `no two running the same: ${had}`);
+  assert.equal(new Set(had).size, 4, 'and in twelve Eclipses all four come up');
+  assert.deepEqual(S.ECLIPSE_IDS, ['blood_moon', 'iron_tide', 'ash_storm', 'volatile']);
+
+  const endless = nights(Object.assign(arena(7), { endless: true }), 16).map((id) => id !== null);
+  assert.deepEqual(endless.slice(8), [true, false, false, true, false, true, true, true], 'endless mode: nights 9, 12, 14, 15 and 16 of 9 to 16');
+});
+
+test('Blood Moon: AI enemies move a quarter faster and pick up heroes from 60% further off', () => {
+  const walked = (eclipse) => {
+    const g = Object.assign(arena(), { eclipse });
+    const e = S.spawnEnemy(g, 'skitter', 0, MID.x, MID.y);
+    run(g, 1);
+    return gap(e, MID);
+  };
+  assert.ok(Math.abs(walked('blood_moon') / walked(null) - 1.25) < 1e-6);
+
+  const chases = (eclipse) => {
+    const g = Object.assign(arena(), { eclipse });
+    const e = S.spawnEnemy(g, 'skitter', 0, MID.x, MID.y);
+    const hero = place(g.heroes[JADE + DART], MID.x, MID.y + S.AGGRO * 1.5); // away from the way to Amber's Ember
+    const before = gap(e, hero);
+    run(g, 0.5);
+    return gap(e, hero) < before - 20;
+  };
+  assert.deepEqual([chases(null), chases('blood_moon')], [false, true]);
+});
+
+test('Iron Tide: twice the Breakers, and AI enemies hit structures a quarter harder but Embers as before', () => {
+  let tides = 0;
+  for (let seed = 1; seed <= 12; seed++) {
+    const g = arena(seed);
+    g.wave = 2;
+    S.startNight(g);
+    const breakers = g.spawn.filter((sp) => sp.team === 0 && sp.type === 'breaker').length;
+    assert.equal(breakers, g.eclipse === 'iron_tide' ? 4 : 2, `seed ${seed}, ${g.eclipse}`);
+    tides += g.eclipse === 'iron_tide';
+  }
+  assert.ok(tides > 0, 'some seed gave an Iron Tide');
+
+  const slammed = (eclipse) => {
+    const g = Object.assign(arena(), { eclipse });
+    const wall = S.addStruct(g, 'wall', 0, MID.cx + 2, MID.cy);
+    S.spawnEnemy(g, 'colossus', 0, MID.x, MID.y).slam = DT / 2; // its ground-slam goes off on the first tick
+    run(g, DT);
+    return wall.max - wall.hp;
+  };
+  const slam = S.ENEMIES.colossus.dmg * S.ENEMIES.colossus.structMult;
+  assert.deepEqual([slammed(null), slammed('iron_tide')], [slam, slam * 1.25]);
+
+  const g = Object.assign(arena(), { eclipse: 'iron_tide' }), em = g.teams[0].ember;
+  strandAmber(g);
+  S.spawnEnemy(g, 'skitter', 0, em.x + S.EMBER_R + 12, em.y);
+  run(g, 0.1);
+  assert.equal(em.max - em.hp, S.ENEMIES.skitter.dmg, 'the Ember takes the usual bite');
+});
+
+test('Ash Storm: Turrets see three quarters as far, and AI enemies come with a shield that goes before their health', () => {
+  const fires = (eclipse, away) => {
+    const g = Object.assign(arena(), { eclipse });
+    S.addStruct(g, 'turret', 0, MID.cx, MID.cy);
+    S.spawnEnemy(g, 'breaker', 0, MID.x + away, MID.y).stun = 100;
+    run(g, 0.5);
+    return g.shots.length > 0;
+  };
+  const range = S.STRUCTS.turret.range;
+  assert.deepEqual([fires(null, range * 0.9), fires('ash_storm', range * 0.9), fires('ash_storm', range * 0.7)], [true, false, true]);
+
+  const g = Object.assign(arena(), { eclipse: 'ash_storm' });
+  const spikes = S.addStruct(g, 'spikes', 0, MID.cx, MID.cy);
+  const e = S.spawnEnemy(g, 'breaker', 0, spikes.x, spikes.y);
+  e.stun = 100;
+  assert.equal(e.shield, S.ECLIPSES.ash_storm.shield);
+  run(g, 1);
+  assert.ok(Math.abs(e.shield - 5) < 1e-6 && e.hp === e.max, `after 30 damage: shield ${e.shield}, health ${e.hp} of ${e.max}`);
+  run(g, 1);
+  assert.ok(!('shield' in e) && Math.abs(e.max - e.hp - 25) < 1e-6, `after 60: shield ${e.shield}, ${e.max - e.hp} health lost`);
+  assert.equal(S.spawnEnemy(Object.assign(arena(), { eclipse: null }), 'breaker', 0, MID.x, MID.y).shield, undefined, 'no shield on another night');
+});
+
+test('Volatile: a dying AI enemy bursts, hurting heroes, structures and other AI enemies near it (in chains) but no Ember, and pays one more Scrap', () => {
+  const g = Object.assign(arena(), { eclipse: 'volatile' }), em = g.teams[0].ember, V = S.ECLIPSES.volatile;
+  strandAmber(g);
+  const spikes = S.addStruct(g, 'spikes', 0, em.x / S.CELL + 1, em.y / S.CELL); // 63 from the Ember's middle: inside every burst below
+  const a = S.spawnEnemy(g, 'skitter', 0, spikes.x, spikes.y);
+  const b = S.spawnEnemy(g, 'skitter', 0, spikes.x, spikes.y - 50);
+  a.stun = b.stun = 100;
+  b.hp = 20; // the first burst is enough to set it off
+  const wall = S.addStruct(g, 'wall', 2, spikes.cx + 1, spikes.cy); // 40 from a, 64 from b
+  const dart = place(g.heroes[AZURE + DART], spikes.x, spikes.y + 50); // 50 from a, 100 from b
+  const far = place(g.heroes[JADE + DART], spikes.x, spikes.y + 200);
+  const scrap = g.teams[0].scrap;
+  run(g, 1.2); // the Spikes take a's 30 health in a second
+  assert.ok(a.dead && b.dead, 'the burst of the first set off the second');
+  assert.equal(dart.max - dart.hp, V.blast, 'one burst reached the hero');
+  assert.equal(far.hp, far.max);
+  assert.equal(wall.max - wall.hp, 2 * V.blast, 'both reached the Wall');
+  assert.equal(em.hp, em.max, 'neither hurt the Ember');
+  assert.equal(g.teams[0].scrap - scrap, 2 * (S.ENEMIES.skitter.bounty + V.scrap), 'the team whose Spikes killed the first is paid for both, one extra each');
+
+  const calm = arena();
+  const sp = S.addStruct(calm, 'spikes', 0, MID.cx, MID.cy);
+  S.spawnEnemy(calm, 'skitter', 0, sp.x, sp.y).stun = 100;
+  const near = place(calm.heroes[AZURE + DART], sp.x, sp.y + 50);
+  run(calm, 1.2);
+  assert.deepEqual([near.hp, calm.teams[0].scrap - scrap], [near.max, S.ENEMIES.skitter.bounty], 'on another night nothing bursts');
+});
+
+// ---------------------------------------------------------------- the Core
+
+const coreIn = (g) => (g.core = { x: S.ARENA.x, y: S.ARENA.y, team: -1, prog: 0 });
+const atCore = (h, dx = 0) => place(h, S.ARENA.x + dx, S.ARENA.y);
+
+test('the Core appears twelve seconds into each day from the second, once, and goes at dusk', () => {
+  const g = S.createGame(1);
+  run(g, 20);
+  assert.equal(g.core, null, 'not on the first day');
+  Object.assign(g, { wave: 1, timer: S.DAY_LENGTH, coreSpawned: false });
+  run(g, S.CORE_DEF.spawnDelay - 0.1);
+  assert.equal(g.core, null);
+  run(g, 0.2);
+  assert.deepEqual(g.core, { x: S.ARENA.x, y: S.ARENA.y, team: -1, prog: 0 });
+  g.core = null; // as if taken
+  run(g, 5);
+  assert.equal(g.core, null, 'only one a day');
+  coreIn(g);
+  g.timer = 0.05;
+  run(g, 0.1);
+  assert.deepEqual([g.phase, g.core], ['night', null], 'dusk takes it away');
+  g.enemies = [];
+  g.spawn = [];
+  run(g, DT);
+  assert.deepEqual([g.phase, g.coreSpawned], ['day', false], 'and the next day gets its own');
+});
+
+test('one team alone at the Core takes it in six seconds, and is paid: Scrap, Ember health, Ultimate charge and Rush', () => {
+  const g = arena(), T = g.teams[0], D = S.CORE_DEF;
+  coreIn(g);
+  atCore(g.heroes[AMBER + DART], D.radius - 5);
+  Object.assign(g.heroes[AMBER + COG], { alive: false, hp: 0, respawn: 100 });
+  T.ember.hp = 1000;
+  g.heroes[AMBER + ANVIL].ult = 80;
+  const scrap = T.scrap;
+  run(g, D.captureTime - 0.1);
+  assert.deepEqual([g.core.team, Math.round(g.core.prog * 10) / 10, T.scrap], [0, 5.9, scrap], 'nearly there, nothing paid yet');
+  run(g, 0.2);
+  assert.equal(g.core, null);
+  assert.deepEqual([T.scrap - scrap, T.ember.hp], [D.scrapReward, 1000 + D.emberHeal]);
+  assert.deepEqual(g.heroes.slice(AMBER, AMBER + S.TEAM_SIZE).map((h) => h.ult), [100, D.ultGrant, D.ultGrant, 0, D.ultGrant], 'every living hero of the team, wherever it is; capped at 100; nothing for the one that is down');
+  assert.ok(g.heroes[AMBER + PATCH].rush > D.rush - 0.2 && g.heroes[AZURE + DART].rush === 0);
+  assert.ok(g.fx.some((f) => f.kind === 'capture' && f.team === 0));
+
+  const full = arena();
+  coreIn(full);
+  atCore(full.heroes[JADE + ANVIL]);
+  full.teams[2].ember.hp = full.teams[2].ember.max - 20;
+  run(full, D.captureTime + 0.1);
+  assert.equal(full.teams[2].ember.hp, full.teams[2].ember.max, 'the Ember is never mended past full');
+});
+
+test('the Core freezes while two teams stand at it, runs a rival\'s progress down before a new team\'s counts, and drains when left', () => {
+  const g = arena(), D = S.CORE_DEF;
+  coreIn(g);
+  const amber = atCore(g.heroes[AMBER + DART], -40), azure = g.heroes[AZURE + DART], home = { x: azure.x, y: azure.y };
+  const prog = () => Math.round(g.core.prog * 100) / 100;
+  run(g, 2);
+  assert.deepEqual([g.core.team, prog()], [0, 2]);
+  atCore(azure, 40);
+  run(g, 3);
+  assert.deepEqual([g.core.team, prog()], [0, 2], 'contested: frozen');
+  place(amber, 300, 300);
+  run(g, 1.5);
+  assert.deepEqual([g.core.team, prog()], [0, 0.5], 'Azure alone: Amber\'s two seconds run down first');
+  run(g, 1.5);
+  assert.deepEqual([g.core.team, prog()], [1, 1], 'then it is Azure\'s, and climbs');
+  place(azure, home.x, home.y);
+  run(g, 1);
+  assert.deepEqual([g.core.team, prog()], [1, 1 - D.decayRate], 'nobody there: it drains at half speed');
+  run(g, 1.5);
+  assert.deepEqual([g.core.team, prog()], [-1, 0], 'to nothing, and then it is nobody\'s');
+  Object.assign(azure, { alive: false, hp: 0, respawn: 100 });
+  atCore(azure);
+  run(g, 1);
+  assert.equal(prog(), 0, 'a hero that is down does not hold it');
+});
+
+test('the same seed and inputs give the same match with an Eclipse and a Core in it', () => {
+  const play = (seed) => {
+    const g = S.createGame(seed), seen = { core: false, eclipse: false, taken: false };
+    Object.assign(g, { wave: 2, timer: S.DAY_LENGTH }); // the third day, so the third night brings an Eclipse
+    run(g, 75, (s) => {
+      seen.core ||= s.core !== null;
+      seen.eclipse ||= s.eclipse !== null;
+      seen.taken ||= s.fx.some((f) => f.kind === 'capture');
+      const h = s.heroes[AMBER + DART], to = s.core || s.teams[0].ember;
+      const dx = to.x - h.x, dy = to.y - h.y, d = Math.hypot(dx, dy);
+      return { [AMBER + DART]: { mx: d > 30 ? dx / d : 0, my: d > 30 ? dy / d : 0, aim: Math.atan2(dy, dx), fire: s.phase === 'night' }, [AZURE + COG]: { q: true, fire: true, aim: s.t } };
+    });
+    assert.deepEqual(seen, { core: true, eclipse: true, taken: true }, 'the match had a Core, taken, and an Eclipse');
+    return JSON.stringify(g);
+  };
+  assert.equal(play(11), play(11));
+  assert.notEqual(play(11), play(12));
 });

@@ -368,3 +368,48 @@ test('a Forge bot out on its own goes home when a rival hero comes in sight, but
   place(g.heroes[AMBER + COG], forge.x + 50, forge.y + 50);
   assert.ok(heading(botInput(g, forge.i), forge, rival) > 0.9, 'with company: it closes to firing range instead');
 });
+
+// ---------------------------------------------------------------- the Core and Eclipses
+
+test('with the Core standing by day, the Dart and the Anvil go and hold it; the medic follows once one is there; Cog and Forge stay home', () => {
+  const g = quiet();
+  g.wave = 1;
+  const core = (g.core = { x: S.ARENA.x, y: S.ARENA.y, team: -1, prog: 0 });
+  const towards = (k) => heading(botInput(g, AMBER + k), g.heroes[AMBER + k], core);
+  assert.ok(towards(DART) > 0.95 && towards(ANVIL) > 0.95, `Dart ${towards(DART)}, Anvil ${towards(ANVIL)}`);
+  for (const k of [PATCH, COG, FORGE]) {
+    const withCore = botInput(g, AMBER + k);
+    g.core = null;
+    assert.deepEqual(withCore, botInput(g, AMBER + k), `${g.heroes[AMBER + k].kind} does just what it would with no Core`);
+    g.core = core;
+  }
+  place(g.heroes[AMBER + ANVIL], core.x + 150, core.y);
+  assert.ok(towards(PATCH) > 0.95, 'the medic goes once a teammate is nearly there');
+
+  const dart = place(g.heroes[AMBER + DART], core.x + 20, core.y), anvil = place(g.heroes[AMBER + ANVIL], core.x - 20, core.y);
+  const there = [botInput(g, dart.i), botInput(g, anvil.i)];
+  assert.deepEqual(there.map((i) => [i.mx, i.my]), [[0, 0], [0, 0]], 'in the Core, they stand');
+  const rival = place(g.heroes[AZURE + DART], core.x + 200, core.y);
+  const holds = botInput(g, anvil.i), kites = botInput(g, dart.i);
+  assert.ok(holds.fire && Math.abs(holds.aim) < 0.01 && kites.fire, 'both shoot the rival that comes for it');
+  assert.ok(kites.mx < -0.9 && holds.mx === 0, 'each fighting as it does anywhere: the Dart backs off to its range, the Anvil is at its own already');
+  place(rival, 300, 300);
+
+  S.spawnEnemy(g, 'breaker', 0, g.teams[0].ember.x + 200, g.teams[0].ember.y);
+  place(dart, g.teams[0].ember.x + 600, g.teams[0].ember.y);
+  assert.ok(heading(botInput(g, dart.i), dart, core) < 0.5, 'and with its Ember under attack, home comes first');
+});
+
+test('on a Volatile night a bot backs away from an AI enemy that is about to burst', () => {
+  const g = quiet(), dart = place(g.heroes[AMBER + DART], MID.x, MID.y);
+  g.phase = 'night';
+  const e = S.spawnEnemy(g, 'skitter', 0, MID.x + 60, MID.y);
+  e.hp = 25;
+  const steps = () => heading(botInput(g, dart.i), dart, e);
+  const calm = steps();
+  g.eclipse = 'volatile';
+  assert.ok(steps() < -0.95, `straight away from it: ${steps()}`);
+  assert.ok(calm > -0.95, 'which it does not do on another night');
+  e.hp = 40;
+  assert.equal(steps(), calm, 'nor from one with health to spare');
+});

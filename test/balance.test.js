@@ -27,11 +27,12 @@ const QUICK = { matches: 12, firstSeed: 1, dmg: 0.3, deaths: [0.33, 2], minutes:
 // alone: the average minutes the last Ember may stand by itself before it falls too; under the least, endless mode adds nothing
 // to a normal match, and over the most the nights have stopped getting harder fast enough to end it.
 // ups: the fewest tier-2 structures the most upgraded base of a match may average (a bot base has 48 pieces): fewer, and bots have stopped using the Scrap sink.
-// Where the game stood when these were set (30 matches, 2026-11-18, the first with tier-2 upgrades): 24.9 min and 19.5 nights on average,
-// the last Ember alone for 0.8 min of it, every piece of the leading base upgraded; last standing Amber 10, Azure 8, Jade 12.
-// Before upgrades it was 21.7 min and 17.0 nights, and the bounds were 14 to 20 nights and 18 to 26 minutes.
+// Where the game stood when these were set (30 matches, 2026-11-18, with tier-2 upgrades, Eclipses and the Core): 21.4 min and 17.0 nights
+// on average, the last Ember alone for 0.7 min of it, every piece of the leading base upgraded; last standing Amber 10, Azure 11, Jade 9.
+// History: 21.7 min and 17.0 nights before upgrades (bounds 14 to 20 nights, 18 to 26 minutes); upgrades alone made it 24.9 and 19.5
+// (bounds moved to 16 to 23 and 21 to 29); Eclipses, which make every third night harder, brought it back, and the first bounds with it.
 // A match costs about three times a normal one to play, hence only ten under npm test.
-const ENDLESS = { matches: 10, firstSeed: 1, nights: [16, 23], minutes: [21, 29], alone: [0.3, 4], ups: 36, seats: 3 };
+const ENDLESS = { matches: 10, firstSeed: 1, nights: [14, 20], minutes: [18, 26], alone: [0.3, 4], ups: 36, seats: 3 };
 
 const LIMIT = 3600; // seconds of match time after which a match counts as unfinished
 

@@ -1,7 +1,7 @@
 // Emberhold browser client: sends this player's input and draws the snapshots the server
 // sends back. No rules live here: canBuild, moveHero and shotHit are the sim's own, imported
 // to colour the build ghost and to predict this player's own steps, shots and builds.
-import { WORLD, CELL, TEAMS, HEROES, HERO_IDS, STRUCTS, ENEMIES, EMBER_R, HERO_R, BUILD_RANGE, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, structAt, TIER2, moveHero, dash, shotHit, heroFireMult, heroSpeed, canCast, inArena, ARENA, POWERUPS, TEAM_SIZE, teamOf } from './sim.js';
+import { WORLD, CELL, TEAMS, HEROES, HERO_IDS, STRUCTS, ENEMIES, EMBER_R, HERO_R, BUILD_RANGE, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, structAt, TIER2, ECLIPSES, CORE_DEF, moveHero, dash, shotHit, heroFireMult, heroSpeed, canCast, inArena, ARENA, POWERUPS, TEAM_SIZE, teamOf } from './sim.js';
 import { interpolate } from './interp.js';
 import { createTimeline, createPredictor, createGunPredictor, createBuildPredictor, createFxPredictor, createUnpacker } from './net.js';
 import { PX, TILE, MOODS, GOLD, ALARM, ground, heroSprite, createArt } from './art.js';
@@ -17,7 +17,7 @@ const shadeCanvas = document.createElement('canvas'), shade = shadeCanvas.getCon
 const mini = $('minimap').getContext('2d');
 
 const VIEW = { w: 704, h: 440 }; // the most art pixels any screen shows, so a big monitor is no advantage
-const FX_SOUND = { ring: 'Shockwave', dash: 'Dash', heal: 'Mend', down: 'Hero down', scrap: 'Scavenge', ult: 'Ultimate', pop: 'Hit', power: 'Power-up', fix: 'Build' };
+const FX_SOUND = { ring: 'Shockwave', dash: 'Dash', heal: 'Mend', down: 'Hero down', scrap: 'Scavenge', ult: 'Ultimate', pop: 'Hit', blast: 'Hit', power: 'Power-up', capture: 'Power-up', fix: 'Build' };
 const WHY = {
   down: 'You are down', range: 'Too far away', occupied: 'Occupied', ember: 'Too close to an Ember',
   rival: 'Too close to a rival Ember', unit: 'Something is standing there', scrap: 'Not enough Scrap', bounds: 'Out over the water',
@@ -36,7 +36,7 @@ let qAt = -1e9, rAt = -1e9, qSeq = 0, rSeq = 0; // when we last showed our own Q
 const fresh = (at) => performance.now() - at < 1000; // still waiting for the server's word on it (a second at most, if the line has died)
 const keys = new Set();
 const mouse = { x: innerWidth / 2, y: innerHeight / 2, wx: 0, wy: 0, left: false, right: false };
-const seen = { phase: '', wave: -1, alive: [true, true, true] };
+const seen = { phase: '', wave: -1, alive: [true, true, true], core: false };
 let buildType = null, ghostWhy = null, lastOrder = '', dark = 0, lastFrame = performance.now(), zoom = 2, mood = -1, bannerUntil = 0;
 const heard = { id: 0, phase: '', hp: 0, hitAt: 0, aegis: [] }, strides = new Map();
 // The big moments throw sparks and jolt the camera. Both are for show only: they live here, not in the match.
@@ -232,7 +232,8 @@ function hear(s) {
     for (const f of s.fx) {
       if (f.id <= heard.id || spells.hides(f.id)) continue; // our own Q or R was heard when we pressed it
       if (f.kind === 'fall') sound.play('Ember lost', 0.7);
-      else if (FX_SOUND[f.kind] && (f.kind !== 'pop' || pops++ < 2)) sound.play(FX_SOUND[f.kind], near(f) * (f.kind === 'pop' ? 0.5 : 1));
+      else if (FX_SOUND[f.kind] && ((f.kind !== 'pop' && f.kind !== 'blast') || pops++ < 2)) sound.play(FX_SOUND[f.kind], near(f) * (f.kind === 'pop' ? 0.5 : 1));
+      if (f.kind === 'capture') say(`Team ${TEAMS[f.team].name} took the Core`);
       if (f.kind === 'fall') later(() => boom('fall', f, [TEAMS[f.team].color, TEAMS[f.team].color], 0.35)); // felt, a little, wherever you are
       else if (f.kind === 'pop' && f.r >= ENEMIES.colossus.r * 2) later(() => boom('colossus', f));
       else if (f.kind === 'ring' && f.team < 0) later(() => boom('slam', f)); // a Colossus's ground-slam
@@ -270,13 +271,15 @@ function onState(s) {
   if (slot < 0) return;
   const team = teamOf(slot);
   if (s.phase !== seen.phase || s.wave !== seen.wave) {
-    if (s.phase === 'night') say(`Night ${s.wave}: defend your Ember`);
+    if (s.phase === 'night') say(s.eclipse ? `Night ${s.wave}, ${ECLIPSES[s.eclipse].name}: ${ECLIPSES[s.eclipse].text}` : `Night ${s.wave}: defend your Ember`);
     else if (s.phase === 'day') say(`Day ${s.wave + 1}: scavenge, build, raid`);
   }
   s.teams.forEach((T, k) => {
     if (!T.alive && seen.alive[k]) say(k !== team ? `Team ${TEAMS[k].name} has fallen` : touch.used ? 'Your Ember is lost. Tap Q or R to follow the survivors.' : 'Your Ember is lost. Q and E follow the survivors, WASD flies the camera.');
     seen.alive[k] = T.alive;
   });
+  if (s.core && !seen.core) say('Central Core active');
+  seen.core = s.core !== null;
   const left = s.teams.filter((T) => T.alive).length;
   if (s.endless && left === 1 && seen.left > 1 && s.teams[team].alive) say('Yours is the last Ember. Hold out as long as you can.');
   seen.left = left;
@@ -296,7 +299,8 @@ function hud() {
   const width = (node, frac) => (node.querySelector('i').style.width = `${clamp(frac, 0, 1) * 100}%`);
   $('phaseName').textContent = s.phase === 'night' ? `Night ${s.wave}` : s.phase === 'day' ? `Day ${s.wave + 1}` : 'Match over';
   const left = s.enemies.length + s.pending;
-  $('phaseInfo').textContent = s.phase === 'night' ? `${left} AI ${left === 1 ? 'enemy' : 'enemies'} left` : s.phase === 'day' ? `Night falls in ${Math.ceil(s.timer)}s` : '';
+  // Under an Eclipse its name leads the line, and the count is cut short to keep it on one.
+  $('phaseInfo').textContent = s.phase === 'night' ? (s.eclipse ? `${ECLIPSES[s.eclipse].name} · ${left} left` : `${left} AI ${left === 1 ? 'enemy' : 'enemies'} left`) : s.phase === 'day' ? `Night falls in ${Math.ceil(s.timer)}s` : '';
 
   [...$('embers').children].forEach((box, k) => {
     const E = s.teams[k];
@@ -354,6 +358,7 @@ function minimap() {
   for (const st of s.structs) dot(st, 2, `${TEAMS[st.team].color}99`);
   for (const w of s.wrecks) dot(w, 2, '#a8744f');
   for (const p of s.pickups) dot(p, 3, '#ffffff');
+  if (s.core) dot(s.core, 6, GOLD);
   for (const e of s.enemies) dot(e, e.type === 'colossus' ? 4 : 2, '#b79cff');
   s.teams.forEach((T, i) => {
     if (!T.alive) return;
@@ -724,6 +729,12 @@ function draw(s, now) {
   // Everything that stands on the ground, drawn back to front so nearer things overlap farther ones.
   const standing = [];
   const stand = (y, paint) => standing.push([y, paint]);
+  if (s.core && inView(s.core, 140)) { // gold while it is nobody's or fought over, else the colour of the team filling it
+    const c = s.core, there = new Set(s.heroes.filter((h) => h.alive && Math.hypot(h.x - c.x, h.y - c.y) <= CORE_DEF.radius).map((h) => h.team));
+    const col = c.team >= 0 && there.size < 2 ? TEAMS[c.team].color : GOLD;
+    art.coreRing(X(c.x), Y(c.y), c.prog / CORE_DEF.captureTime, col, now); // flat on the ground: under everything
+    stand(c.y, () => art.core(X(c.x), Y(c.y), col, now));
+  }
   builder.shown(s.structs);
   for (const st of [...s.structs, ...builder.list()]) { // with what we have ordered, until the server's own takes its place
     if (!inView(st)) continue;

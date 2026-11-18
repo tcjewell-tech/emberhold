@@ -1,9 +1,10 @@
 // Bot heroes. botInput() looks at the match and returns the same input object a human
 // client sends, so bots play by exactly the rules players do. It keeps no memory.
-import { HEROES, HERO_IDS, STRUCTS, ENEMIES, TEAMS, CELL, EMBER_R, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, post, structAt, nearestHostile, enemyDmg } from './sim.js';
+import { HEROES, HERO_IDS, STRUCTS, ENEMIES, TEAMS, CELL, EMBER_R, SCAV_RANGE, SCAV_TIME, CORE_DEF, ECLIPSES, canBuild, buildCost, post, structAt, nearestHostile, enemyDmg } from './sim.js';
 
 const SIGHT = 520;
 const LEASH = 280; // how far from their Ember bots will chase at night
+const BOMB_HP = 30; // on a Volatile night, an AI enemy with this little health left is about to burst: keep out of its reach
 const AEGIS_WORTH = 0.35; // a Forge spends Aegis when the wave that is landing would cost the squad this share of its health while it lasts
 const gap = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
@@ -184,9 +185,14 @@ export function botInput(s, i, spend = true, reserve = 0) {
     // The Dart leads the raid. An Anvil goes only as its bodyguard: alone it is too slow to get back out.
     const lead = h.kind === 'anvil' ? mates.find((o) => o.kind === 'dart') : null;
     const rival = raider && (lead || h.kind === 'dart') ? raidTarget(s, h) : null;
+    // While the Core stands it is worth more than a raid: the Dart and the Anvil go and hold it, and the medic joins them once one is there.
+    const core = s.core && (raider || (h.kind === 'patch' && mates.some((o) => gap(o, s.core) < CORE_DEF.radius * 2))) ? s.core : null;
     if (piece) {
       goal = em; // every blueprint cell is in build range from the Ember itself
       if (piece.ready) out.build = { type: piece.type, cx: piece.cx, cy: piece.cy };
+    } else if (core) {
+      goal = core;
+      stopAt = CORE_DEF.radius * 0.5;
     } else if (rival) {
       goal = rival;
       stopAt = gun.range * 0.85;
@@ -229,6 +235,11 @@ export function botInput(s, i, spend = true, reserve = 0) {
     const d = gap(h, turret);
     stopAt = 0;
     to = d < STRUCTS.turret.range + 10 ? { x: 2 * h.x - turret.x, y: 2 * h.y - turret.y } : d > gun.range - 10 ? turret : h;
+  }
+  const bomb = s.eclipse === 'volatile' ? s.enemies.find((e) => !e.dead && e.hp <= BOMB_HP && gap(h, e) < ECLIPSES.volatile.r) : null;
+  if (bomb) { // whatever else it was doing, it backs out of the burst first
+    to = { x: 2 * h.x - bomb.x, y: 2 * h.y - bomb.y };
+    stopAt = 0;
   }
   const dx = to.x - h.x, dy = to.y - h.y, d = Math.hypot(dx, dy);
   if (d > stopAt && d > 0) {

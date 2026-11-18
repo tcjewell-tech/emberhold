@@ -116,6 +116,33 @@ export const ENEMIES = {
   colossus: { name: 'Colossus', hp: 2500, speed: 45, dmg: 40, rate: 0.5, r: 36, bounty: 1, structMult: 2, slam: { r: 130, every: 4 } },
 };
 
+/**
+ * Eclipses. Every third night (and every second from night 12 in endless mode) falls under one, which bends a rule
+ * until dawn. s.eclipse is its key while it lasts, else null.
+ * blood_moon: AI enemies move faster and pick up heroes from further off.
+ * iron_tide: twice the Breakers, and AI enemies hit structures (not Embers) harder.
+ * ash_storm: Turrets and Sentries see less far, and AI enemies arrive with a shield that soaks damage before their health.
+ * volatile: an AI enemy bursts as it dies, hurting the heroes, structures (not Embers) and other AI enemies around it
+ * (so packs go off in chains), and is worth one more Scrap.
+ */
+export const ECLIPSES = {
+  blood_moon: { name: 'Blood Moon', speed: 1.25, aggro: 1.6, text: 'AI enemies are faster and hunt heroes from further off' },
+  iron_tide: { name: 'Iron Tide', breakers: 2, structDmg: 1.25, text: 'Twice the Breakers, and structures take more damage' },
+  ash_storm: { name: 'Ash Storm', turretRange: 0.75, shield: 35, text: 'Turrets see less far, and AI enemies come shielded' },
+  volatile: { name: 'Volatile', blast: 28, r: 75, scrap: 1, text: 'AI enemies burst when they die' },
+};
+export const ECLIPSE_IDS = Object.keys(ECLIPSES);
+/** What tonight's Eclipse sets a number to, or `none` when there is no Eclipse or it leaves that number alone. */
+const eclipsed = (s, k, none = 1) => ECLIPSES[s.eclipse]?.[k] ?? none;
+
+/**
+ * The Core: from the second day on it appears mid-map spawnDelay seconds into the day, and goes at dusk or when taken.
+ * A team with a living hero within radius, and no rival there, fills it over captureTime seconds, after first
+ * running down whatever a rival had put in. With two teams there nothing moves; with none it drains at decayRate.
+ * Taking it pays the team Scrap, mends its Ember, and gives each of its living heroes Ultimate charge and `rush` seconds of Rush.
+ */
+export const CORE_DEF = { spawnDelay: 12, radius: 110, captureTime: 6, decayRate: 0.5, scrapReward: 45, emberHeal: 120, ultGrant: 35, rush: 6 };
+
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
 const IDLE = {};
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -135,9 +162,12 @@ function rand(s) {
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
 
-/** Where hero number k of a team stands guard, and respawns. */
+/**
+ * Where hero number k of a team stands guard, and respawns. The five posts are the same for every team, turned
+ * with its Ember to face mid-map (as the wrecks are), so no team's Dart starts the day nearer the Core than another's.
+ */
 export function post(team, k) {
-  const a = Math.PI / 4 + (k * 2 * Math.PI) / TEAM_SIZE;
+  const a = FACING[team] - Math.PI / 4 + (k * 2 * Math.PI) / TEAM_SIZE; // Amber faces straight down the map, so its posts are where they always were
   return { x: TEAMS[team].x + Math.cos(a) * 110, y: TEAMS[team].y + Math.sin(a) * 110 };
 }
 
@@ -146,6 +176,8 @@ export function createGame(seed = 1) {
     // mood: which of the three colour moods the match wears. s.seed cannot say: it moves on with every random number.
     t: 0, seed: seed | 0, mood: Math.abs(seed | 0) % 3, phase: 'day', wave: 0, timer: DAY_LENGTH, winner: null, nextId: 1, sv: 0,
     endless: false, // endless mode: the match goes on until every Ember has fallen, and whoever fell last wins
+    eclipse: null, lastEclipse: null, // tonight's Eclipse (a key of ECLIPSES) or null; and the one before, so no two in a row are the same
+    core: null, coreSpawned: false, // the Core while it stands: { x, y, team, prog } (team -1: nobody's yet); and whether today's has appeared
     teams: TEAMS.map((T) => ({ scrap: START_SCRAP, alive: true, overclock: 0, aegis: 0, ember: { x: T.x, y: T.y, hp: EMBER_HP, max: EMBER_HP } })),
     heroes: [], enemies: [], shots: [], structs: [], wrecks: [], pickups: [], fx: [], spawn: [],
   };
@@ -318,17 +350,29 @@ function credit(s, owner, dmg) {
 
 function hurtEnemy(s, e, dmg, team, owner) {
   if (e.dead) return;
-  credit(s, owner, Math.min(dmg, e.hp));
-  e.hp -= dmg;
+  const soaked = Math.min(e.shield ?? 0, dmg); // an Ash Storm's shield goes first
+  credit(s, owner, Math.min(dmg, e.hp + soaked));
+  if (soaked && !(e.shield -= soaked)) delete e.shield;
+  e.hp -= dmg - soaked;
   if (e.hp > 0) return;
   e.dead = true;
-  if (team >= 0) s.teams[team].scrap += ENEMIES[e.type].bounty;
+  if (team >= 0) s.teams[team].scrap += ENEMIES[e.type].bounty + eclipsed(s, 'scrap', 0);
   if (owner >= 0) s.heroes[owner].stats.kills++;
   addFx(s, 'pop', e.x, e.y, ENEMIES[e.type].r * 2, -1);
+  if (s.eclipse === 'volatile') burst(s, e, team);
   if (rand(s) < DROP[e.type]) {
     const kinds = Object.keys(POWERUPS);
     s.pickups.push({ id: s.nextId++, kind: kinds[Math.floor(rand(s) * kinds.length)], x: e.x, y: e.y, ttl: PICKUP_TTL });
   }
+}
+
+/** A Volatile night: a dying AI enemy bursts. Whoever killed it is paid for the AI enemies its burst kills in turn, but gets no credit for the damage. */
+function burst(s, e, team) {
+  const V = ECLIPSES.volatile, near = (o) => dist2(e.x, e.y, o.x, o.y) < V.r * V.r;
+  addFx(s, 'blast', e.x, e.y, V.r, -1);
+  for (const h of s.heroes) if (near(h)) hurtHero(s, h, V.blast, -1, -1);
+  for (const st of [...s.structs]) if (near(st)) hurtStruct(s, st, V.blast, -1);
+  for (const o of s.enemies) if (near(o)) hurtEnemy(s, o, V.blast, team, -1); // e itself is dead already, so the chain ends
 }
 
 function hurtHero(s, h, dmg, team, owner) {
@@ -650,7 +694,7 @@ function updateStructs(s, dt) {
     const def = STRUCTS.turret;
     st.cd -= dt * (s.teams[st.team].overclock > 0 ? HEROES.cog.r.mult : 1);
     if (st.cd > 0) continue;
-    const target = nearestHostile(s, st.team, st.x, st.y, def.range);
+    const target = nearestHostile(s, st.team, st.x, st.y, def.range * eclipsed(s, 'turretRange'));
     if (!target) {
       st.cd = 0.1; // look again shortly rather than every tick
       continue;
@@ -674,14 +718,15 @@ export function spawnEnemy(s, type, team, x, y) {
   const e = { id: s.nextId++, type, team, x, y, hp, max: hp, cd: 0, stun: 0 };
   keepIn(e, ENEMIES[type].r + 4); // a spawn point out over the water comes ashore at the edge
   if (def.slam) e.slam = def.slam.every;
+  if (eclipsed(s, 'shield', 0)) e.shield = eclipsed(s, 'shield', 0);
   s.enemies.push(e);
   return e;
 }
 
 /** The hero an AI enemy chases: the nearest in aggro range, with a Fortified Anvil seeming closer. */
 function pickPrey(s, e) {
-  const taunt = (AGGRO / HEROES.anvil.r.taunt) ** 2;
-  let prey = null, best = AGGRO * AGGRO;
+  const aggro = AGGRO * eclipsed(s, 'aggro'), taunt = (aggro / HEROES.anvil.r.taunt) ** 2;
+  let prey = null, best = aggro * aggro;
   for (const h of s.heroes) {
     if (!h.alive) continue;
     const d = dist2(e.x, e.y, h.x, h.y) * (h.fortify > 0 ? taunt : 1);
@@ -725,7 +770,7 @@ function updateEnemy(s, e, dt) {
     e.slam = def.slam.every;
     const r2 = def.slam.r * def.slam.r;
     for (const h of s.heroes) if (dist2(e.x, e.y, h.x, h.y) < r2) hurtHero(s, h, dmg, -1, -1);
-    for (const st of [...s.structs]) if (dist2(e.x, e.y, st.x, st.y) < r2) hurtStruct(s, st, dmg * def.structMult, -1);
+    for (const st of [...s.structs]) if (dist2(e.x, e.y, st.x, st.y) < r2) hurtStruct(s, st, dmg * def.structMult * eclipsed(s, 'structDmg'), -1);
     addFx(s, 'ring', e.x, e.y, def.slam.r, -1);
   }
 
@@ -752,11 +797,12 @@ function updateEnemy(s, e, dt) {
   const ux = gx / gl, uy = gy / gl;
   const ahead = structAt(s, cellOf(e.x + ux * (def.r + 4)), cellOf(e.y + uy * (def.r + 4)));
   if (blocks(ahead)) {
-    strike(() => hurtStruct(s, ahead, dmg * (def.structMult || 1), -1));
+    strike(() => hurtStruct(s, ahead, dmg * (def.structMult || 1) * eclipsed(s, 'structDmg'), -1));
     return;
   }
-  e.x += ux * def.speed * dt;
-  e.y += uy * def.speed * dt;
+  const speed = def.speed * eclipsed(s, 'speed');
+  e.x += ux * speed * dt;
+  e.y += uy * speed * dt;
   keepIn(e, def.r);
 }
 
@@ -810,7 +856,7 @@ function updateShots(s, dt) {
     }
     const hit = shotHit(s, sh);
     if (!hit) continue;
-    if (hit.st) hurtStruct(s, hit.st, sh.dmg, sh.owner);
+    if (hit.st) hurtStruct(s, hit.st, sh.dmg * (sh.team < 0 ? eclipsed(s, 'structDmg') : 1), sh.owner); // team -1: a Spitter's shot
     else if (hit.e) hurtEnemy(s, hit.e, sh.dmg, sh.team, sh.owner);
     else if (hit.h) hurtHero(s, hit.h, sh.dmg, sh.team, sh.owner);
     else hurtEmber(s, hit.ember, sh.dmg * (sh.team >= 0 ? EMBER_ARMOR : 1), sh.team, sh.owner);
@@ -840,14 +886,14 @@ function spawnWrecks(s) {
   FACING.forEach((f) => s.wrecks.push({ id: s.nextId++, x: CENTRE.x - Math.cos(f) * 120, y: CENTRE.y - Math.sin(f) * 120, scrap: 40 }));
 }
 
-function pack(wave, boss) {
+function pack(wave, boss, breakers = 1) {
   const list = [];
   const add = (type, n) => {
     for (let k = 0; k < n; k++) list.push(type);
   };
   add('skitter', Math.round(6 + 4 * wave)); // wave may be a fraction in endless mode
   add('spitter', Math.round(Math.max(0, 3 * (wave - 1))));
-  add('breaker', Math.round(Math.max(0, 2 * (wave - 2))));
+  add('breaker', Math.round(Math.max(0, 2 * (wave - 2))) * breakers);
   add('colossus', boss ? 1 : 0);
   return list;
 }
@@ -856,7 +902,12 @@ export function startNight(s) {
   s.phase = 'night';
   s.wave++;
   s.timer = 0;
-  const list = pack(level(s), s.wave % 5 === 0), gap = Math.min(0.45, 16 / list.length);
+  s.core = null; // nobody took it in time
+  if (s.wave % 3 === 0 || (s.endless && s.wave >= 12 && s.wave % 2 === 0)) {
+    const ids = ECLIPSE_IDS.filter((id) => id !== s.lastEclipse);
+    s.eclipse = s.lastEclipse = ids[Math.floor(rand(s) * ids.length)];
+  }
+  const list = pack(level(s), s.wave % 5 === 0, eclipsed(s, 'breakers')), gap = Math.min(0.45, 16 / list.length);
   list.forEach((type, k) => {
     s.teams.forEach((T, team) => T.alive && s.spawn.push({ type, team, at: s.t + 1 + k * gap }));
   });
@@ -865,8 +916,32 @@ export function startNight(s) {
 export function startDay(s) {
   s.phase = 'day';
   s.timer = DAY_LENGTH;
+  s.eclipse = null;
+  s.coreSpawned = false;
   for (const st of s.structs) if (st.type !== 'spikes') st.hp = st.max;
   spawnWrecks(s);
+}
+
+function updateCore(s, dt) {
+  const c = s.core, D = CORE_DEF;
+  const here = s.teams.flatMap((T, k) => (T.alive && s.heroes.some((h) => h.alive && h.team === k && dist2(h.x, h.y, c.x, c.y) <= D.radius * D.radius) ? [k] : []));
+  if (here.length > 1) return; // contested: nothing moves
+  if (!here.length) {
+    c.prog = Math.max(0, c.prog - D.decayRate * dt);
+    if (!c.prog) c.team = -1;
+    return;
+  }
+  const k = here[0];
+  if (c.team !== k && c.prog > 0) return void (c.prog = Math.max(0, c.prog - dt)); // a rival's progress is run down first, a second a second
+  c.team = k;
+  c.prog += dt;
+  if (c.prog < D.captureTime) return;
+  const T = s.teams[k];
+  T.scrap += D.scrapReward;
+  T.ember.hp = Math.min(T.ember.max, T.ember.hp + D.emberHeal);
+  for (const h of s.heroes) if (h.alive && h.team === k) Object.assign(h, { ult: Math.min(100, h.ult + D.ultGrant), rush: Math.max(h.rush, D.rush) });
+  addFx(s, 'capture', c.x, c.y, D.radius, k);
+  s.core = null;
 }
 
 const alive = (o) => !o.dead;
@@ -879,6 +954,10 @@ export function step(s, inputs, dt = 1 / 60) {
   if (s.phase === 'day') {
     s.timer -= dt;
     if (s.timer <= 0) startNight(s);
+    else if (s.wave >= 1 && !s.coreSpawned && DAY_LENGTH - s.timer >= CORE_DEF.spawnDelay) {
+      s.core = { x: ARENA.x, y: ARENA.y, team: -1, prog: 0 };
+      s.coreSpawned = true;
+    }
   } else {
     while (s.spawn.length && s.spawn[0].at <= s.t) {
       const sp = s.spawn.shift(), a = rand(s) * Math.PI * 2;
@@ -887,6 +966,7 @@ export function step(s, inputs, dt = 1 / 60) {
   }
 
   for (const h of s.heroes) updateHero(s, h, inputs[h.i], dt);
+  if (s.core) updateCore(s, dt);
   updateStructs(s, dt);
   for (const e of s.enemies) if (!e.dead) updateEnemy(s, e, dt);
   separate(s);
