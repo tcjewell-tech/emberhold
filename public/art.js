@@ -6,7 +6,7 @@ import { TEAMS, WORLD, CELL, ARENA, STRUCTS, inArena } from './sim.js';
 export const PX = 0.5; // art pixels per world unit
 export const TILE = CELL * PX;
 const INK = '#1b1e30', STEEL = '#8794ab', SKIN = '#eec39a', PURPLE = '#8a63e6';
-export const GOLD = '#ffd35a';
+export const GOLD = '#ffd35a', ALARM = '#ff6b6b';
 
 /** Each match wears one of these, chosen from its seed. */
 export const MOODS = [
@@ -298,6 +298,15 @@ export function createArt(g) {
       ring(x, y, rad, col, { thick: f.kind === 'fall' ? 4 : 2, gap: p > 0.6 ? 2 : 1 });
       if (f.kind === 'heal' || f.kind === 'pop') { g.globalAlpha = (1 - p) * 0.25; S.E(x, y, rad, rad, col); }
       if (f.kind === 'scrap' || f.kind === 'heal') for (let k = 0; k < 5; k++) { g.globalAlpha = 1 - p; S.R(x - 8 + hash(k, f.id) * 16, y - p * 16 - hash(k, 5) * 8, 2, 2, col); }
+      g.globalAlpha = 1;
+    },
+    /** An arrowhead whose tip is at (x, y), pointing along angle a at something off screen; it breathes, it does not flash. */
+    pointer(x, y, a, col, t) {
+      const c = Math.cos(a), s = Math.sin(a);
+      const dots = [[0, 0], ...[1, 2, 3].flatMap((k) => [[-k * 3, k * 2.5], [-k * 3, -k * 2.5]])].map(([u, v]) => [x + u * c - v * s, y + u * s + v * c]); // the tip, then two wings trailing back
+      g.globalAlpha = 0.7 + 0.3 * Math.sin(t / 130);
+      for (const [px, py] of dots) S.R(px - 2, py - 2, 5, 5, INK);
+      for (const [px, py] of dots) S.R(px - 1, py - 1, 3, 3, col);
       g.globalAlpha = 1;
     },
     /** One spark of a burst: a square that shrinks and fades as its time (p.t of p.life) runs out. */

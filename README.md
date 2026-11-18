@@ -67,6 +67,11 @@ them more often; the Colossus always does.
 
 The arena is round, ringed by water.
 
+## Base alarm
+
+When your own Ember is hit, its bar at the top of the screen is outlined in red for a moment.
+If the Ember is off your screen, a red arrow at the edge of the view points the way home.
+
 ## Upgrades
 
 Build the same structure again on one of your team's own and it is upgraded: it is mended,

@@ -4,7 +4,7 @@
 import { WORLD, CELL, TEAMS, HEROES, HERO_IDS, STRUCTS, ENEMIES, EMBER_R, HERO_R, BUILD_RANGE, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, structAt, TIER2, moveHero, dash, shotHit, heroFireMult, heroSpeed, canCast, inArena, ARENA, POWERUPS, TEAM_SIZE, teamOf } from './sim.js';
 import { interpolate } from './interp.js';
 import { createTimeline, createPredictor, createGunPredictor, createBuildPredictor, createFxPredictor, createUnpacker } from './net.js';
-import { PX, TILE, MOODS, GOLD, ground, heroSprite, createArt } from './art.js';
+import { PX, TILE, MOODS, GOLD, ALARM, ground, heroSprite, createArt } from './art.js';
 import { createSound } from './sound.js';
 import { createTouch } from './touch.js';
 import { botInput, nextPiece } from './bots.js';
@@ -51,6 +51,7 @@ const BOOM = {
 };
 const sparks = [];
 let shake = 0;
+let alarmUntil = 0; // our Ember was hurt a moment ago: until this time (ms), mark its bar and point the way home if it is off screen
 
 // ---------------------------------------------------------------- connection
 
@@ -251,6 +252,7 @@ function hear(s) {
       heard.hitAt = now;
       sound.play('Ember hit', 0.8);
     }
+    if (mine.ember.hp < heard.hp) alarmUntil = now + 1500;
     // A teammate's new structure. Our own was heard when we ordered it (see place).
     if (s.structs.some((st) => st.id > heard.id && st.team === team && st.ttl === 0 && !builder.has(st.cx, st.cy))) sound.play('Build', 0.7);
   }
@@ -299,6 +301,7 @@ function hud() {
   [...$('embers').children].forEach((box, k) => {
     const E = s.teams[k];
     box.classList.toggle('fallen', !E.alive);
+    box.classList.toggle('hit', k === h.team && performance.now() < alarmUntil);
     box.querySelector('em').textContent = E.alive ? Math.ceil(E.ember.hp) : 'Fallen';
     width(box, E.ember.hp / E.ember.max);
   });
@@ -757,6 +760,14 @@ function draw(s, now) {
   for (const f of [...s.fx.filter((f) => !spells.hides(f.id)), ...spells.list()]) if (inView(f, 200)) art.fx(f, X(f.x), Y(f.y), f.r * PX);
   for (const p of sparks) if (inView(p)) art.spark(p, X(p.x), Y(p.y));
   if (buildType && slot >= 0) drawGhost(X, Y);
+  const home = slot >= 0 && now < alarmUntil ? s.teams[teamOf(slot)].ember : null;
+  if (home && !inView(home, 0)) { // our Ember is being hurt out of sight: an arrow at the edge of the open view points the way back
+    const dx = home.x - cam.x, dy = home.y - cam.y;
+    // The edge is drawn in from the HUD's panels (their sizes are CSS pixels: left 250, right 40, top 165 with its banner, bottom 190), so no panel covers the arrow.
+    const rx = Math.max(30, W / 2 - (dx < 0 ? 250 : 40) / zoom), ry = Math.max(30, H / 2 - (dy < 0 ? 165 : 190) / zoom);
+    const k = Math.min(rx / Math.abs(dx || 1e-9), ry / Math.abs(dy || 1e-9));
+    art.pointer(W / 2 + dx * k, H / 2 + dy * k, Math.atan2(dy, dx), ALARM, now);
+  }
   if (touch.used && slot >= 0 && me.known) art.ring(X(me.x), Y(me.y), HEROES[s.heroes[slot].kind].gun.range * PX, 'rgba(255,255,255,0.4)', { gap: 4 }); // how far the automatic gun reaches
 }
 
