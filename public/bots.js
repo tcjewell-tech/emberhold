@@ -26,7 +26,7 @@ const BLUEPRINTS = TEAMS.map((T) => {
     (corner ? gates : walls).push([dx, dy]);
   }
   walls.sort((a, b) => fromMid(a) - fromMid(b));
-  return [
+  const base = [
     ...[[2, 2], [-3, -3], [-3, 2], [2, -3]].map(at('turret')),
     ...[[1, 1], [-2, -2]].map(at('shield')),
     ...walls.map(at('wall')),
@@ -34,16 +34,20 @@ const BLUEPRINTS = TEAMS.map((T) => {
     ...[[3, -1], [-4, 0], [0, 3], [-1, -4]].map(at('turret')),
     ...[[-2, 1], [1, -2]].map(at('shield')),
   ];
+  // With the base standing, what comes in goes on upgrading it (up: true): the guns first, then the fields, Walls and Spikes.
+  const ups = ['turret', 'shield', 'wall', 'spikes'].flatMap((type) => base.filter((p) => p.type === type).map((p) => ({ ...p, up: true })));
+  return [...base, ...ups];
 });
 
 // Scrap a bot leaves in the pool when a human is on its team, so that it never takes the last of what they are saving.
 // A team with 80 or more is free to spend: no piece costs more than 45, so that follows from the reserve by itself.
 export const RESERVE = 35;
 
-/** The next missing blueprint piece the team can afford and still keep `reserve` Scrap, or null (save up, or nothing left). */
+/** The next blueprint piece, missing or not yet upgraded, that the team can afford and still keep `reserve` Scrap; or null (save up, or nothing left). */
 export function nextPiece(s, h, reserve = 0) {
   for (const p of BLUEPRINTS[h.team]) {
-    if (structAt(s, p.cx, p.cy)) continue;
+    const st = structAt(s, p.cx, p.cy);
+    if (p.up ? !st || st.team !== h.team || st.type !== p.type || st.tier === 2 : st) continue;
     if (s.teams[h.team].scrap - reserve < buildCost(h.kind, p.type)) return null;
     const why = canBuild(s, h.i, p.type, p.cx, p.cy);
     if (why === null || why === 'range') return { ...p, ready: why === null };

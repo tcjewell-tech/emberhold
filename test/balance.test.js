@@ -26,22 +26,29 @@ const QUICK = { matches: 12, firstSeed: 1, dmg: 0.3, deaths: [0.33, 2], minutes:
 // Endless mode plays on until no Ember is left, with difficulty climbing at half pace. nights and minutes: the averages allowed.
 // alone: the average minutes the last Ember may stand by itself before it falls too; under the least, endless mode adds nothing
 // to a normal match, and over the most the nights have stopped getting harder fast enough to end it.
-// Where the game stood when these were set (30 matches, 2026-11-16): 21.7 min and 17.0 nights on average, the last Ember alone for 1.1 min of it;
-// last standing Amber 8, Azure 10, Jade 12. A match costs about three times a normal one to play, hence only ten under npm test.
-const ENDLESS = { matches: 10, firstSeed: 1, nights: [14, 20], minutes: [18, 26], alone: [0.3, 4], seats: 3 };
+// ups: the fewest tier-2 structures the most upgraded base of a match may average (a bot base has 48 pieces): fewer, and bots have stopped using the Scrap sink.
+// Where the game stood when these were set (30 matches, 2026-11-18, the first with tier-2 upgrades): 24.9 min and 19.5 nights on average,
+// the last Ember alone for 0.8 min of it, every piece of the leading base upgraded; last standing Amber 10, Azure 8, Jade 12.
+// Before upgrades it was 21.7 min and 17.0 nights, and the bounds were 14 to 20 nights and 18 to 26 minutes.
+// A match costs about three times a normal one to play, hence only ten under npm test.
+const ENDLESS = { matches: 10, firstSeed: 1, nights: [16, 23], minutes: [21, 29], alone: [0.3, 4], ups: 36, seats: 3 };
 
 const LIMIT = 3600; // seconds of match time after which a match counts as unfinished
 
-/** job: { seed, endless }. alone: minutes the last Ember stood by itself (endless mode; a normal match ends the moment one is left). */
+/**
+ * job: { seed, endless }. alone: minutes the last Ember stood by itself (endless mode; a normal match ends the moment one is left).
+ * ups: the most upgraded (tier-2) structures any one team had standing at once, looked at once a second.
+ */
 function playMatch({ seed, endless = false }) {
   const g = Object.assign(S.createGame(seed), { endless });
-  let last = -1; // when only one Ember was left
-  while (g.phase !== 'over' && g.t < LIMIT) {
+  let last = -1, ups = 0; // last: when only one Ember was left
+  for (let n = 0; g.phase !== 'over' && g.t < LIMIT; n++) {
     S.step(g, g.heroes.map((h) => botInput(g, h.i)), 1 / 60);
     if (last < 0 && g.teams.filter((T) => T.alive).length <= 1) last = g.t;
+    if (n % 60 === 0) ups = Math.max(ups, ...g.teams.map((_, k) => g.structs.filter((st) => st.team === k && st.tier === 2).length));
   }
   return {
-    seed, endless, over: g.phase === 'over', winner: g.winner, minutes: g.t / 60, wave: g.wave, alone: last < 0 ? 0 : (g.t - last) / 60,
+    seed, endless, over: g.phase === 'over', winner: g.winner, minutes: g.t / 60, wave: g.wave, alone: last < 0 ? 0 : (g.t - last) / 60, ups,
     heroes: g.heroes.map((h) => ({ kind: h.kind, team: h.team, ...h.stats })),
   };
 }
@@ -90,7 +97,7 @@ function summarise(results, counts = () => true) {
   for (const h of heroes) Object.assign(h, { dpmVs: h.dpm / avg.dpm - 1, killsVs: h.kills / avg.kills - 1, deathsVs: h.deaths / avg.deaths });
   return {
     n, heroes, unfinished: results.filter((r) => !r.over).length, minutes: minutes / n, waves: results.reduce((t, r) => t + r.wave, 0) / n,
-    alone: results.reduce((t, r) => t + r.alone, 0) / n,
+    alone: results.reduce((t, r) => t + r.alone, 0) / n, ups: results.reduce((t, r) => t + r.ups, 0) / n,
     wins: S.TEAMS.map((_, k) => results.filter((r) => r.winner === k).length), draws: results.filter((r) => r.over && r.winner < 0).length,
   };
 }
@@ -112,6 +119,7 @@ function report(sum, seeds) {
     `Balance: ${sum.n} bot-only matches, seeds ${seeds[0]} to ${seeds.at(-1)}`,
     `Finished ${sum.n - sum.unfinished} of ${sum.n}; average ${sum.minutes.toFixed(1)} min, ${sum.waves.toFixed(1)} nights`,
     `Wins: ${tally(sum)}, draws ${sum.draws}`,
+    `The most upgraded base in a match had ${sum.ups.toFixed(1)} tier-2 structures on average`,
     '', ...table(sum), '',
   ].join('\n');
 }
@@ -122,6 +130,7 @@ function endlessReport(sum, last, seeds) {
     `Endless mode: ${sum.n} bot-only matches, seeds ${seeds[0]} to ${seeds.at(-1)}`,
     `Finished ${sum.n - sum.unfinished} of ${sum.n}; average ${sum.minutes.toFixed(1)} min, ${sum.waves.toFixed(1)} nights; the last Ember stood alone for ${sum.alone.toFixed(1)} min on average`,
     `Last standing: ${tally(sum)}, none ${sum.draws}`,
+    `The most upgraded base in a match had ${sum.ups.toFixed(1)} tier-2 structures on average`,
     '', 'The team that was last standing, a hero a match:', ...table(last), '',
   ].join('\n');
 }
@@ -161,6 +170,7 @@ else {
     test(`endless: the last Ember stands alone for ${E.alone[0]} to ${E.alone[1]} minutes on average`, () => {
       assert.ok(between(all.alone, E.alone), `it stands alone for ${all.alone.toFixed(1)} min`);
     });
+    test(`endless: the most upgraded base of a match has at least ${E.ups} tier-2 structures on average`, () => assert.ok(all.ups >= E.ups, `it has ${all.ups.toFixed(1)}`));
     seatsTest('endless: no team is last standing far more or less often than a third of the time', all, E.seats);
   }
 

@@ -145,7 +145,7 @@ export function createGunPredictor(patience = 1000) {
 /**
  * Structures this player has just ordered, shown at once while the server's answer is on its way.
  * place() adds one. heard() is shown the newest snapshot's structures and the last of our inputs
- * whose orders the server has tried (the snapshot's `done`): an order whose structure (same cell, team and type) now stands is paid
+ * whose orders the server has tried (the snapshot's `done`): an order whose structure (same cell, team, type and tier) now stands is paid
  * for; one the server has acted on without building it was refused and is dropped at once, as is
  * one still unanswered after `patience` ms (a lost connection) and a paid one whose structure is
  * already gone again. shown() is given the structures
@@ -154,7 +154,7 @@ export function createGunPredictor(patience = 1000) {
  */
 export function createBuildPredictor(patience = 1000) {
   let orders = [];
-  const at = (list, o) => list.some((st) => st.cx === o.cx && st.cy === o.cy && st.team === o.team && st.type === o.type);
+  const at = (list, o) => list.some((st) => st.cx === o.cx && st.cy === o.cy && st.team === o.team && st.type === o.type && (st.tier ?? 1) === (o.tier ?? 1)); // an upgrade is answered by the upgraded structure, not the one it was ordered on
   return {
     list: () => orders,
     /** o: a structure-shaped object (type, team, cx, cy, ...) with its cost in Scrap and the seq of the input that orders it. */

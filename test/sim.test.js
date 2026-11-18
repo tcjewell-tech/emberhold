@@ -462,7 +462,7 @@ test('building spends Scrap and is refused when a rule is broken', () => {
 
   const why = (type, cx, cy) => S.canBuild(g, me, type, cx, cy);
   assert.equal(why('wall', MID.cx + 2, MID.cy), null);
-  assert.equal(why('wall', MID.cx + 1, MID.cy), 'occupied');
+  assert.equal(why('turret', MID.cx + 1, MID.cy), 'occupied');
   assert.equal(why('wall', MID.cx + 12, MID.cy), 'range');
   assert.equal(why('constructor', MID.cx + 2, MID.cy), 'type');
   assert.equal(why('wall', MID.cx + 0.5, MID.cy), 'bounds');
@@ -874,4 +874,69 @@ test('dash, which the client borrows to predict its own, blinks the way the hero
   const wall = S.addStruct(g, 'wall', 1, Math.floor(h.x / S.CELL) + 2, Math.floor(h.y / S.CELL));
   S.dash(g, h, 1, 0);
   assert.ok(h.x < wall.x - S.CELL / 2, 'a rival Wall stops it');
+});
+
+// ---------------------------------------------------------------- tier-2 upgrades
+
+test('ordering the same structure again on your own upgrades it once, for its cost again, with half as much more health', () => {
+  const g = arena();
+  const me = AMBER + ANVIL, T = g.teams[0], cell = { cx: MID.cx + 2, cy: MID.cy };
+  place(g.heroes[me], MID.x, MID.y);
+  T.scrap = 200;
+  const order = (type, who = me) => run(g, DT, { [who]: { build: { type, ...cell } } });
+  order('turret');
+  const st = g.structs[0], sv = g.sv;
+  st.hp = 10;
+  assert.equal(S.canBuild(g, me, 'wall', cell.cx, cell.cy), 'occupied', 'a different structure is not an upgrade');
+  place(g.heroes[AZURE + ANVIL], MID.x, MID.y + 60);
+  assert.equal(S.canBuild(g, AZURE + ANVIL, 'turret', cell.cx, cell.cy), 'occupied', 'nor is a rival\'s order');
+  T.scrap = S.STRUCTS.turret.cost - 1;
+  assert.equal(S.canBuild(g, me, 'turret', cell.cx, cell.cy), 'scrap');
+  T.scrap = 100;
+  order('turret');
+  assert.deepEqual([g.structs.length, st.tier, st.max, st.hp, T.scrap, g.sv], [1, 2, S.STRUCTS.turret.hp * 1.5, S.STRUCTS.turret.hp * 1.5, 100 - S.STRUCTS.turret.cost, sv], 'the same structure, mended and tougher; nothing was added, so no rebuild of the cache');
+  order('turret');
+  assert.deepEqual([S.canBuild(g, me, 'turret', cell.cx, cell.cy), st.max, T.scrap], ['occupied', 225, 60], 'only once');
+  run(g, DT, { [me]: { remove: cell } });
+  assert.equal(T.scrap, 60 + S.STRUCTS.turret.cost, 'removing it gives back half of both payments');
+});
+
+test('a structure still being built, and a Sentry, cannot be upgraded', () => {
+  const g = arena();
+  const me = AMBER + COG, T = g.teams[0];
+  place(g.heroes[me], MID.x, MID.y);
+  T.scrap = 500;
+  run(g, DT, { [me]: { build: { type: 'shield', cx: MID.cx + 2, cy: MID.cy } } });
+  assert.equal(S.canBuild(g, me, 'shield', MID.cx + 2, MID.cy), 'occupied', 'not until it works');
+  run(g, S.STRUCTS.shield.buildTime + DT);
+  assert.equal(S.canBuild(g, me, 'shield', MID.cx + 2, MID.cy), null);
+  run(g, DT, { [me]: { q: true } });
+  const sentry = g.structs.find((st) => st.ttl > 0);
+  assert.equal(S.canBuild(g, me, 'turret', sentry.cx, sentry.cy), 'occupied');
+});
+
+test('an upgraded Turret, Spikes and Shield Generator each do half as much more', () => {
+  const g = arena();
+  const me = AMBER + DART, h = place(g.heroes[me], MID.x, MID.y), T = g.teams[0];
+  T.scrap = 1000;
+  const twice = (type, cx) => {
+    run(g, DT, { [me]: { build: { type, cx, cy: MID.cy } } });
+    run(g, 3); // a Shield Generator takes two seconds to build
+    run(g, DT, { [me]: { build: { type, cx, cy: MID.cy } } });
+    return g.structs.find((st) => st.cx === cx);
+  };
+  assert.equal(h.shieldMax, 0);
+  assert.equal(twice('shield', MID.cx + 1).tier, 2);
+  run(g, DT);
+  assert.equal(h.shieldMax, S.STRUCTS.shield.absorb * 1.5, 'the field of an upgraded generator lends a barrier of 75');
+
+  const spikes = twice('spikes', MID.cx + 4), turret = twice('turret', MID.cx - 2);
+  const foe = S.spawnEnemy(g, 'breaker', 0, spikes.x, spikes.y);
+  foe.stun = 100;
+  const before = foe.hp;
+  run(g, DT);
+  assert.ok(Math.abs(before - foe.hp - S.STRUCTS.spikes.dps * 1.5 * DT) < 1e-9, 'Spikes cut half as deep again');
+  run(g, 0.2);
+  const shot = g.shots.find((sh) => sh.owner === -1 && sh.team === 0);
+  assert.equal(shot.dmg, S.STRUCTS.turret.dmg * 1.5, `the Turret (tier ${turret.tier}) hits half as hard again`);
 });

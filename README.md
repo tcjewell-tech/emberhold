@@ -67,6 +67,15 @@ them more often; the Colossus always does.
 
 The arena is round, ringed by water.
 
+## Upgrades
+
+Build the same structure again on one of your team's own and it is upgraded: it is mended,
+and from then on has half as much more health and does half as much more (a Turret's damage,
+Spikes' damage, a Shield Generator's barrier: 75 points). It costs what the structure cost,
+works once for each structure, and shows as gold corners. Click the structure to do it;
+dragging a line of Walls across it does not. Bots upgrade their base once it is complete,
+and on a team with a human they leave 35 Scrap in the pool for the humans to spend.
+
 ## Shield Generator and Forge
 
 A **Shield Generator** (35 Scrap) starts working 2 seconds after you place it. Friendly heroes
@@ -87,7 +96,7 @@ and Shield Generators around it; **Aegis** (R) halves the damage your whole team
 | Q | Ability |
 | R | Ultimate (when charged) |
 | F (hold) | Scavenge a wreck for Scrap |
-| 1 2 3 4 | Build Wall / Turret / Spikes / Shield Generator: left-click places (drag to paint), right-click removes, Esc stops |
+| 1 2 3 4 | Build Wall / Turret / Spikes / Shield Generator: left-click places (drag to paint), left-click on your own structure upgrades it, right-click removes, Esc stops |
 | Tab (hold) | Scoreboard |
 | Q / E, Space or left-click (once your Ember is lost) | Follow the previous / next Ember or hero still in the match; W A S D flies the camera freely again |
 | M | Sound on or off |

@@ -358,3 +358,21 @@ test('two teammates using their Ultimates side by side each keep their own burst
   theirs.heard([mates, { ...ours, id: 9 }], 6, 130);
   assert.deepEqual([7, 9].map(theirs.hides), [true, false]);
 });
+
+test('an upgrade order is paid for by the upgraded structure, not by the one it was ordered on, and a refused one goes back', () => {
+  const b = createBuildPredictor(1000);
+  b.place({ ...wall(4, 5), tier: 2, seq: 30 }, 0);
+  b.heard([built(4, 5)], 50, 29);
+  assert.equal(b.cost(), 10, 'the Wall it was ordered on stands there already: that is not the answer');
+  assert.equal(b.has(4, 5), true, 'and the cell is taken until the answer comes');
+  b.shown([built(4, 5)]);
+  assert.equal(b.list().length, 1, 'the stand-in, with its gold corners, stays over the old Wall');
+  b.heard([built(4, 5, { tier: 2 })], 110, 30);
+  assert.equal(b.cost(), 0, 'upgraded: paid');
+  b.shown([built(4, 5, { tier: 2 })]);
+  assert.equal(b.list().length, 0, 'and it hands over to the real thing');
+
+  b.place({ ...wall(7, 5), tier: 2, seq: 32 }, 400);
+  b.heard([built(7, 5)], 500, 32);
+  assert.deepEqual([b.list().length, b.cost()], [0, 0], 'tried and still not upgraded: refused');
+});

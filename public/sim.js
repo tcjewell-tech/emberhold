@@ -103,6 +103,12 @@ export const STRUCTS = {
   shield: { name: 'Shield Generator', cost: 35, hp: 120, blocks: true, buildTime: 2, size: 28, radius: 90, absorb: 50, delay: 4, rate: 25 },
 };
 
+// Ordering the same structure again on your own finished one upgrades it, once, for its cost again: half as much
+// more health, and half as much more of what it does (a Turret's damage, Spikes' damage, a Shield Generator's barrier).
+// An upgraded structure carries tier: 2; the rest carry no tier at all, which keeps them out of the snapshot.
+export const TIER2 = 1.5;
+const tier = (st) => (st.tier === 2 ? TIER2 : 1);
+
 export const ENEMIES = {
   skitter: { name: 'Skitter', hp: 30, speed: 120, dmg: 8, rate: 1, r: 10, bounty: 1 },
   spitter: { name: 'Spitter', hp: 45, speed: 80, dmg: 10, rate: 0.8, r: 12, bounty: 1, range: 260 },
@@ -362,10 +368,12 @@ function hurtEmber(s, k, dmg, team, owner) {
 /** The rule a hero's barrier refills by: its own (Anvil), else the Shield Generator's. */
 const shieldOf = (h) => HEROES[h.kind].shield ?? STRUCTS.shield;
 
-/** Is this hero inside a shield field: a working Shield Generator of its team, or a living Forge teammate (itself included)? */
-function shielded(s, h) {
+/** The barrier the shield field a hero stands in lends it: that of the best working Shield Generator of its team in reach, or of a living Forge teammate (itself included). */
+function fieldOf(s, h) {
   const r2 = STRUCTS.shield.radius ** 2, near = (o) => o.team === h.team && dist2(h.x, h.y, o.x, o.y) <= r2;
-  return cache(s).shields.some((st) => st.wait <= 0 && near(st)) || s.heroes.some((o) => o.kind === 'forge' && o.alive && near(o));
+  let best = s.heroes.some((o) => o.kind === 'forge' && o.alive && near(o)) ? 1 : 0;
+  for (const st of cache(s).shields) if (st.wait <= 0 && near(st)) best = Math.max(best, tier(st));
+  return STRUCTS.shield.absorb * best;
 }
 
 function heal(src, o, amount, charges) {
@@ -430,7 +438,11 @@ export function canBuild(s, i, type, cx, cy) {
   if (!Number.isInteger(cx) || !Number.isInteger(cy) || !onLand(cx, cy)) return 'bounds';
   const x = cx * CELL + CELL / 2, y = cy * CELL + CELL / 2;
   if (dist2(h.x, h.y, x, y) > BUILD_RANGE * BUILD_RANGE) return 'range';
-  if (structAt(s, cx, cy)) return 'occupied';
+  const st = structAt(s, cx, cy);
+  if (st) { // the same again on our own finished structure is an upgrade: it stands already, so only the Scrap can stop it
+    if (st.team !== h.team || st.type !== type || st.tier === 2 || st.ttl > 0 || st.wait > 0) return 'occupied';
+    return s.teams[h.team].scrap < buildCost(h.kind, type) ? 'scrap' : null;
+  }
   if (nearLivingEmber(s, x, y, 60, -1)) return 'ember';
   if (nearLivingEmber(s, x, y, NO_BUILD_NEAR_RIVAL, h.team)) return 'rival';
   if (STRUCTS[type].blocks && hostileInCell(s, h.team, cx, cy)) return 'unit';
@@ -441,13 +453,15 @@ export function canBuild(s, i, type, cx, cy) {
 function tryBuild(s, h, b) {
   if (canBuild(s, h.i, b.type, b.cx, b.cy) !== null) return;
   s.teams[h.team].scrap -= buildCost(h.kind, b.type);
-  addStruct(s, b.type, h.team, b.cx, b.cy);
+  const st = structAt(s, b.cx, b.cy);
+  if (st) Object.assign(st, { tier: 2, max: st.max * TIER2, hp: st.max * TIER2 }); // no s.sv bump: nothing was added or removed
+  else addStruct(s, b.type, h.team, b.cx, b.cy);
 }
 
 function tryRemove(s, h, r) {
   const st = structAt(s, r.cx, r.cy);
   if (!st || st.team !== h.team || st.ttl > 0 || dist2(h.x, h.y, st.x, st.y) > BUILD_RANGE * BUILD_RANGE) return;
-  s.teams[h.team].scrap += Math.floor((STRUCTS[st.type].cost / 2) * (st.hp / st.max));
+  s.teams[h.team].scrap += Math.floor((STRUCTS[st.type].cost / 2) * (st.tier ?? 1) * (st.hp / st.max)); // half of what it cost, upgrade included
   removeStruct(s, st);
 }
 
@@ -565,7 +579,7 @@ function updateHero(s, h, raw, dt) {
   h.rush = Math.max(0, h.rush - dt);
   h.fury = Math.max(0, h.fury - dt);
   h.shieldCd = Math.max(0, h.shieldCd - dt);
-  h.shieldMax = (def.shield?.max ?? 0) + (shielded(s, h) ? STRUCTS.shield.absorb : 0); // the barrier is lost on leaving the field
+  h.shieldMax = (def.shield?.max ?? 0) + fieldOf(s, h); // the barrier is lost on leaving the field
   h.shield = Math.min(h.shieldMax, h.shield + (h.shieldCd === 0 ? shieldOf(h).rate * dt : 0));
   if (h.stun > 0) {
     h.stun = Math.max(0, h.stun - dt);
@@ -585,7 +599,7 @@ function updateHero(s, h, raw, dt) {
 
   const under = structAt(s, cellOf(h.x), cellOf(h.y));
   if (under && under.type === 'spikes' && under.team !== h.team) {
-    const d = Math.min(STRUCTS.spikes.dps * dt, under.hp);
+    const d = Math.min(STRUCTS.spikes.dps * tier(under) * dt, under.hp);
     hurtHero(s, h, d, under.team, -1);
     hurtStruct(s, under, d, -1);
     if (!h.alive) return;
@@ -643,7 +657,7 @@ function updateStructs(s, dt) {
     }
     st.aim = Math.atan2(target.y - st.y, target.x - st.x);
     st.cd = 1 / def.rate;
-    shoot(s, st.x, st.y, st.aim, 700, def.range + 40, def.dmg, st.team, -1);
+    shoot(s, st.x, st.y, st.aim, 700, def.range + 40, def.dmg * tier(st), st.team, -1);
   }
 }
 
@@ -683,7 +697,7 @@ function updateEnemy(s, e, dt) {
   const def = ENEMIES[e.type];
   const under = structAt(s, cellOf(e.x), cellOf(e.y));
   if (under && under.type === 'spikes') {
-    const d = Math.min(STRUCTS.spikes.dps * dt, under.hp);
+    const d = Math.min(STRUCTS.spikes.dps * tier(under) * dt, under.hp);
     hurtEnemy(s, e, d, under.team, -1);
     hurtStruct(s, under, d, -1);
     if (e.dead) return;

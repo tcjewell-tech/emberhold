@@ -1,10 +1,10 @@
 // Emberhold browser client: sends this player's input and draws the snapshots the server
 // sends back. No rules live here: canBuild, moveHero and shotHit are the sim's own, imported
 // to colour the build ghost and to predict this player's own steps, shots and builds.
-import { WORLD, CELL, TEAMS, HEROES, HERO_IDS, STRUCTS, ENEMIES, EMBER_R, HERO_R, BUILD_RANGE, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, moveHero, dash, shotHit, heroFireMult, heroSpeed, canCast, inArena, ARENA, POWERUPS, TEAM_SIZE, teamOf } from './sim.js';
+import { WORLD, CELL, TEAMS, HEROES, HERO_IDS, STRUCTS, ENEMIES, EMBER_R, HERO_R, BUILD_RANGE, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, structAt, TIER2, moveHero, dash, shotHit, heroFireMult, heroSpeed, canCast, inArena, ARENA, POWERUPS, TEAM_SIZE, teamOf } from './sim.js';
 import { interpolate } from './interp.js';
 import { createTimeline, createPredictor, createGunPredictor, createBuildPredictor, createFxPredictor, createUnpacker } from './net.js';
-import { PX, TILE, MOODS, ground, heroSprite, createArt } from './art.js';
+import { PX, TILE, MOODS, GOLD, ground, heroSprite, createArt } from './art.js';
 import { createSound } from './sound.js';
 import { createTouch } from './touch.js';
 import { botInput, nextPiece } from './bots.js';
@@ -429,9 +429,9 @@ function mayBuild(type, cx, cy) {
 
 /** Order a structure and show it at once. The server's answer, a round trip later, confirms it or takes it away again. */
 function place(type, cx, cy) {
-  const h = latest.heroes[slot], hp = STRUCTS[type].hp;
+  const h = latest.heroes[slot], up = structAt(latest, cx, cy), hp = STRUCTS[type].hp * (up ? TIER2 : 1); // on a structure of ours it is an upgrade (mayBuild let it through)
   sendInput({ build: { type, cx, cy } });
-  builder.place({ type, team: h.team, cx, cy, seq, x: cx * CELL + CELL / 2, y: cy * CELL + CELL / 2, hp, max: hp, aim: 0, ttl: 0, wait: STRUCTS[type].buildTime ?? 0, cost: buildCost(h.kind, type) }, performance.now());
+  builder.place({ type, team: h.team, cx, cy, seq, x: cx * CELL + CELL / 2, y: cy * CELL + CELL / 2, hp, max: hp, aim: up ? up.aim : 0, ttl: 0, wait: up ? 0 : STRUCTS[type].buildTime ?? 0, cost: buildCost(h.kind, type), ...(up && { tier: 2 }) }, performance.now());
   sound.play('Build', 0.7);
 }
 
@@ -459,7 +459,8 @@ function order() {
   const cx = Math.floor(at.x / CELL), cy = Math.floor(at.y / CELL);
   const key = `${mouse.left}${buildType}${cx},${cy}`;
   if (key === lastOrder) return;
-  if (mouse.left && mayBuild(buildType, cx, cy) === null) place(buildType, cx, cy);
+  // Only a press upgrades, never a drag: painting a line of Walls must not spend Scrap on the Walls it crosses.
+  if (mouse.left && (lastOrder === '' || !structAt(latest, cx, cy)) && mayBuild(buildType, cx, cy) === null) place(buildType, cx, cy);
   else if (mouse.right) sendInput({ remove: { cx, cy } });
   else return;
   lastOrder = key;
@@ -693,7 +694,7 @@ function drawGhost(X, Y) {
   if (!h.alive) return;
   const cx = Math.floor(mouse.wx / CELL), cy = Math.floor(mouse.wy / CELL), x = X(cx * CELL), y = Y(cy * CELL);
   ghostWhy = mayBuild(buildType, cx, cy);
-  const col = ghostWhy ? '#ff6b6b' : '#7dffa8';
+  const col = ghostWhy ? '#ff6b6b' : structAt(latest, cx, cy) ? GOLD : '#7dffa8'; // gold: this press would upgrade what stands here
   ctx.globalAlpha = 0.3;
   art.S.R(x, y, TILE, TILE, col);
   ctx.globalAlpha = 1;
@@ -726,6 +727,7 @@ function draw(s, now) {
     const x = X(st.cx * CELL), y = Y(st.cy * CELL);
     if (st.type === 'spikes') art.spikes(st, x, y); // flat on the ground: under everything
     else stand(st.y + CELL / 2, () => art[st.type](st, x, y));
+    if (st.tier === 2) stand(st.y + CELL / 2 + 0.1, () => art.tier2(x, y)); // over its own structure, under whatever stands in front
     if (st.type === 'shield' && !(st.wait > 0)) art.field(st, x, y, now); // flat too, so it never tints whoever stands behind it
   }
   for (const p of s.pickups) if (inView(p)) stand(p.y, () => art.pickup(p, X(p.x), Y(p.y), now));

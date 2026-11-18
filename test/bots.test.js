@@ -301,7 +301,7 @@ test('a bot Cog on a team with a human leaves the reserve in the pool, and spend
 test('the bot base adds Shield Generators after its first Turrets, and their fields cover every guard post', () => {
   const g = quiet(), cog = g.heroes[AMBER + COG], types = [];
   g.teams[0].scrap = 1e6;
-  for (let p; (p = nextPiece(g, cog)) && types.length < 300;) {
+  for (let p; (p = nextPiece(g, cog)) && !p.up && types.length < 300;) {
     types.push(p.type);
     S.addStruct(g, p.type, 0, p.cx, p.cy).wait = 0;
   }

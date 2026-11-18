@@ -6,6 +6,7 @@ import { TEAMS, WORLD, CELL, ARENA, STRUCTS, inArena } from './sim.js';
 export const PX = 0.5; // art pixels per world unit
 export const TILE = CELL * PX;
 const INK = '#1b1e30', STEEL = '#8794ab', SKIN = '#eec39a', PURPLE = '#8a63e6';
+export const GOLD = '#ffd35a';
 
 /** Each match wears one of these, chosen from its seed. */
 export const MOODS = [
@@ -219,6 +220,14 @@ export function createArt(g) {
       [[4, 9], [10, 8], [15, 10], [7, 14], [13, 15], [3, 15]].slice(0, left).forEach(([i, j]) => { // blades wear away as it is used up
         S.R(x + i - 1, y + j - 1, 3, 2, INK); S.R(x + i, y + j - 4, 1, 4, INK); S.R(x + i - 1, y + j - 3, 1, 3, '#dfe6f0'); S.R(x + i, y + j - 1, 1, 1, STEEL);
       });
+    },
+    /** The mark of an upgraded structure: gold brackets on the four corners of its tile. */
+    tier2(x, y) {
+      for (const [i, j] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+        const cx = x + i * (TILE - 1), cy = y + j * (TILE - 1), dx = i ? -1 : 1, dy = j ? -1 : 1;
+        S.R(cx - 1, cy - 1, 3, 3, INK); S.R(cx + dx * 2 - 1, cy - 1, 3, 3, INK); S.R(cx - 1, cy + dy * 2 - 1, 3, 3, INK);
+        S.R(cx, cy, 1, 1, GOLD); S.R(cx + dx, cy, 1, 1, GOLD); S.R(cx + dx * 2, cy, 1, 1, GOLD); S.R(cx, cy + dy, 1, 1, GOLD); S.R(cx, cy + dy * 2, 1, 1, GOLD);
+      }
     },
     /** A Sentry (st.ttl > 0) is the same gun on a light tripod. */
     turret(st, x, y) {
