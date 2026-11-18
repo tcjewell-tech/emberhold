@@ -171,11 +171,14 @@ const caches = new WeakMap();
 function cache(s) {
   let c = caches.get(s);
   if (!c || c.sv !== s.sv) {
+    const old = c;
     c = { sv: s.sv, cells: new Map(), wall: new Uint8Array(COLS * ROWS), flows: [null, null, null], shields: s.structs.filter((st) => st.type === 'shield') };
     for (const st of s.structs) {
       c.cells.set(st.cy * COLS + st.cx, st);
       if (STRUCTS[st.type].blocks) c.wall[st.cy * COLS + st.cx] = 1;
     }
+    // A flow field reads nothing but the wall grid: Spikes laid or worn out leave it as it was, and the fields with it.
+    if (old && old.wall.every((v, i) => v === c.wall[i])) c.flows = old.flows;
     caches.set(s, c);
   }
   return c;
