@@ -86,37 +86,30 @@ export function createPredictor(snap = 120) {
 /**
  * This player's own shots, drawn the moment the trigger is pulled instead of a round trip later,
  * when the server's copies arrive. step() fires local stand-ins at the gun's own rate and flies
- * them; heard() is shown each snapshot's shots and hides the server's copy of every stand-in, so
- * no shot is drawn twice. A shot of ours that nobody predicted is drawn as usual, and a stand-in
- * the server never answers just flies out: only the picture is predicted, never a hit.
- * On a line with no lag the copy can get here first, between two of our frames; it is then drawn
- * as it is and cancels the stand-in that was about to be made, so the shot still shows once.
+ * them; the client orders a volley from the server each time step() makes one, and the server
+ * fires one volley an order, so a stand-in always stands before its copy can come. heard() is
+ * shown each snapshot's shots and hides the server's copy of every stand-in, so no shot is drawn
+ * twice. A shot of ours that nobody predicted is drawn as usual, and a stand-in the server never
+ * answers (the hero went down first) just flies out: only the picture is predicted, never a hit.
  * patience: ms a stand-in waits for its copy before we stop expecting one.
- * grace: ms a copy that got here first waits for the stand-in it cancels: longer than a slow frame, and shorter
- * than the fastest gun's gap between shots (62 ms), so it can only ever cancel its own.
  */
-export function createGunPredictor(patience = 1000, grace = 50) {
-  // owed: when each unanswered stand-in gives up. early: when each copy that beat its stand-in stops counting.
-  // hidden: the copies we do not draw, each with the time to forget it.
-  const shots = [], owed = [], early = [], hidden = new Map();
+export function createGunPredictor(patience = 1000) {
+  // owed: when each unanswered stand-in gives up. hidden: the copies we do not draw, each with the time to forget it.
+  const shots = [], owed = [], hidden = new Map();
   let cd = 0, last = 0;
   return {
     shots,
     /**
      * dt seconds pass, ending at local time now (ms). from is { x, y, aim, team } while the trigger is
      * held and the hero can fire, else null. gun: its row in HEROES; mult: fire-rate multiplier;
-     * blocked(shot): has it hit something or left the arena. Returns true if it made a stand-in volley
-     * (false too when the server's copy of that volley was already here, and is drawn instead).
+     * blocked(shot): has it hit something or left the arena. Returns true if a volley was fired.
      */
     step(dt, now, from, gun, mult, blocked, random = Math.random) {
       cd = Math.max(-dt, cd - dt); // the sim's own cooldown rule, so the two keep the same beat
-      let fired = false;
-      if (from !== null && cd <= 0) {
+      const fired = from !== null && cd <= 0;
+      if (fired) {
         cd += 1 / (gun.rate * mult);
-        while (early.length && early[0] < now) early.shift();
         for (let p = 0; p < gun.pellets; p++) {
-          if (early.shift() !== undefined) continue; // its copy is already on screen
-          fired = true;
           const a = from.aim + (random() - 0.5) * gun.spread; // the server rolls its own spread: ours only looks the part
           shots.push({ x: from.x, y: from.y, vx: Math.cos(a) * gun.speed, vy: Math.sin(a) * gun.speed, ttl: gun.range / gun.speed, team: from.team });
           owed.push(now + patience);
@@ -134,13 +127,12 @@ export function createGunPredictor(patience = 1000, grace = 50) {
     /** A snapshot arrived at local time now: its shots, our hero's slot, and the newest id it has given out. */
     heard(all, slot, newest, now) {
       while (owed.length && owed[0] < now) owed.shift();
-      while (early.length && early[0] < now) early.shift();
       if (newest < last) hidden.clear(); // ids start again in a new match
       for (const sh of all) {
         if (sh.owner !== slot) continue;
-        if (sh.id > last && owed.shift() === undefined) early.push(now + grace);
-        // Kept hidden for a while after the server drops it: the picture runs behind the news, and is still showing it.
-        else if (sh.id > last || hidden.has(sh.id)) hidden.set(sh.id, now + patience);
+        // A new shot of ours is the copy of the oldest stand-in still waiting. Once hidden it stays hidden for a
+        // while after the server drops it: the picture runs behind the news, and is still showing it.
+        if (sh.id > last ? owed.shift() !== undefined : hidden.has(sh.id)) hidden.set(sh.id, now + patience);
       }
       for (const [id, until] of hidden) if (until < now) hidden.delete(id);
       last = newest;

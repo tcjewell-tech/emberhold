@@ -30,7 +30,7 @@ const cam = { x: WORLD.w / 2, y: WORLD.h / 2, scale: 1 };
 let watch = -1; // once our Ember is lost: the hero slot the camera follows, 100 + team for that team's Ember, or -1 to fly free
 const me = createPredictor(); // this player's hero, predicted locally
 const gun = createGunPredictor(), builder = createBuildPredictor(); // and its shots and the structures it orders
-let firing = false; // what we last told the server about the trigger
+let firing = false; // is the trigger held (and the line up): our gun fires while it is
 const spells = createFxPredictor(); // the bursts of our own Q and R
 let qAt = -1e9, rAt = -1e9, qSeq = 0, rSeq = 0; // when we last showed our own Q and R ahead of the server (ms), and the inputs that carried them
 const fresh = (at) => performance.now() - at < 1000; // still waiting for the server's word on it (a second at most, if the line has died)
@@ -375,7 +375,7 @@ function moveVec() {
   return [mx / len, my / len];
 }
 
-/** Held state goes out 30 times a second; one-shot orders (q, r, build, remove) ride along at once. */
+/** Held state goes out 30 times a second; one-shot orders (q, r, shoot, build, remove) ride along at once. */
 function sendInput(extra) {
   if (slot < 0) return;
   const [mx, my] = moveVec();
@@ -391,7 +391,7 @@ function sendInput(extra) {
     else if (mx || my) me.aim = Math.atan2(my, mx); // nothing to shoot: face the way we walk
   }
   firing = fire && ws.readyState === 1; // nothing fires on screen while the connection is down
-  send({ t: 'input', seq, mx, my, aim: me.aim, fire, use, ...extra });
+  send({ t: 'input', seq, mx, my, aim: me.aim, use, ...extra });
 }
 
 /**
@@ -764,16 +764,20 @@ function frame(now) {
   lastFrame = now;
   fit();
   if (!latest) return draw(null, now);
+  if (!snaps.length) return; // reconnecting: the last picture stays up until the new connection's first snapshot
   // Draw a moment a little behind the newest snapshot: blend the two either side of it.
   const at = timeline.at(now);
   let k = snaps.length - 1;
   while (k > 0 && snaps[k].at > at) k--;
   const a = snaps[k], b = snaps[k + 1], shown = b ? interpolate(a.s, b.s, (at - a.at) / (b.at - a.at)) : a.s;
   follow(dt, shown);
-  if (slot >= 0) { // our own gun fires on screen at once; the server's copies of those shots are hidden when they arrive
+  if (slot >= 0) { // our own gun fires here, on screen at once, and orders each volley from the server, whose copies are hidden when they arrive
     const h = latest.heroes[slot], can = firing && h.alive && me.known && !(h.stun > 0) && latest.phase !== 'over';
     const from = can ? { x: me.x, y: me.y, aim: me.aim, team: h.team } : null, def = HEROES[h.kind];
-    if (gun.step(dt, now, from, def.gun, heroFireMult(h), (sh) => !inArena(sh.x, sh.y) || shotHit(latest, sh) !== null)) sound.play(def.gun.name);
+    if (gun.step(dt, now, from, def.gun, heroFireMult(h), (sh) => !inArena(sh.x, sh.y) || shotHit(latest, sh) !== null)) {
+      sound.play(def.gun.name);
+      sendInput({ shoot: true });
+    }
   }
   spells.step(dt);
   for (const p of sparks) { // they slow as they fly and sink a little, like embers

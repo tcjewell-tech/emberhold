@@ -193,66 +193,46 @@ test('the server\'s copy of a predicted shot is hidden; a shot nobody predicted 
   assert.equal(gun.hides(9), false, 'forgotten a second after it was last seen');
 });
 
-test('a copy that reaches us before its stand-in exists cancels that stand-in, so the shot is drawn once', () => {
-  // With no lag (solo play on one computer) the server's shot can arrive between two of our frames.
-  const gun = createGunPredictor();
-  gun.heard([mine(5)], 3, 5, 1000);
-  assert.equal(gun.hides(5), false, 'it is drawn as the server sends it');
-  assert.equal(gun.step(FRAME, 1010, FROM, GUN, 1, never), false, 'so no stand-in is made for it, and no second gun sound');
-  assert.equal(gun.shots.length, 0);
-  for (let f = 1; f < 20; f++) gun.step(FRAME, 1010 + f * 1000 * FRAME, FROM, GUN, 1, never);
-  assert.equal(gun.shots.length, 1, 'the next shot of the burst is predicted as usual');
-  gun.heard([mine(5), mine(8)], 3, 8, 1400);
-  assert.equal(gun.hides(8), true, 'and its copy is hidden');
-
-  const pellets = createGunPredictor();
-  pellets.heard([mine(1), mine(2), mine(3)], 3, 3, 1000);
-  pellets.step(FRAME, 1010, FROM, { ...GUN, pellets: 3 }, 1, never);
-  assert.equal(pellets.shots.length, 0, 'every pellet of a scattergun volley is cancelled by its own copy');
-
-  const stale = createGunPredictor();
-  stale.heard([mine(5)], 3, 5, 1000);
-  assert.equal(stale.step(FRAME, 1500, FROM, GUN, 1, never), true, 'a copy from half a second ago was some other shot: this one is predicted');
-  assert.equal(stale.shots.length, 1);
-});
-
 /**
- * A trigger held for five seconds on a line with the given one-way delays (ms). The server fires on
- * its own beat and its shots reach us with the next 30 Hz snapshot; we draw at 60 fps, `phase` ms out
- * of step with it. Returns how many shots the server fired and how many pictures of them were drawn.
+ * A trigger held for five seconds on a line with the given one-way delays (ms), as the client plays it:
+ * every stand-in volley sends an order, the server fires a volley for each order as soon as it is heard and
+ * its cooldown allows, and its shots reach us with the next 30 Hz snapshot. We draw at 60 fps, `phase` ms
+ * out of step with the server. Returns how many shots the server fired and how many pictures were drawn.
  */
 function holdTrigger(gun, phase, up = 0, down = 0, gunDef = GUN) {
   const gapMs = 1000 / gunDef.rate, flight = (gunDef.range / gunDef.speed) * 1000, serverShots = [];
-  for (let fired = up; fired < 5000; fired += gapMs) for (let p = 0; p < gunDef.pellets; p++) serverShots.push({ id: serverShots.length + 1, owner: 3, fired });
   const events = [];
   for (let n = 0; n * 1000 / 30 < 6500; n++) events.push({ at: n * 1000 / 30 + down, snap: n * 1000 / 30 });
   for (let n = 0; phase + n * 1000 / 60 < 6500; n++) events.push({ at: phase + n * 1000 / 60 });
   events.sort((a, b) => a.at - b.at);
-  const drawn = new Set();
-  let standIns = 0;
+  const copies = new Set();
+  let standIns = 0, lastFired = -Infinity;
   for (const e of events) {
     if (e.snap === undefined) {
-      if (gun.step(FRAME, e.at, e.at < 5000 ? FROM : null, gunDef, 1, never)) standIns += gunDef.pellets;
+      if (!gun.step(FRAME, e.at, e.at < 5000 ? FROM : null, gunDef, 1, never)) continue;
+      standIns += gunDef.pellets;
+      lastFired = Math.max(e.at + up, lastFired + gapMs - 1000 * FRAME); // the order's volley: when it is heard, or when the gun has cooled
+      for (let p = 0; p < gunDef.pellets; p++) serverShots.push({ id: serverShots.length + 1, owner: 3, fired: lastFired });
       continue;
     }
     const live = serverShots.filter((sh) => sh.fired <= e.snap && sh.fired > e.snap - flight);
     gun.heard(live, 3, serverShots.filter((sh) => sh.fired <= e.snap).length, e.at);
-    for (const sh of live) if (!gun.hides(sh.id)) drawn.add(sh.id);
+    for (const sh of live) if (!gun.hides(sh.id)) copies.add(sh.id);
   }
-  return { fired: serverShots.length, drawn: standIns + drawn.size };
+  return { fired: serverShots.length, standIns, copies: copies.size };
 }
 
-test('a held trigger draws every shot once, with no lag or with a lot, whatever the frame timing', () => {
-  for (const [up, down] of [[0, 0], [2, 2], [20, 20], [150, 150]]) {
+test('a held trigger draws every shot once, as its stand-in, with no lag or with a lot, whatever the frame timing', () => {
+  for (const [up, down] of [[0, 0], [2, 2], [20, 20], [150, 150], [400, 400]]) {
     for (const phase of [0, 3, 7, 11, 15]) {
       const r = holdTrigger(createGunPredictor(), phase, up, down);
-      assert.equal(r.drawn, r.fired, `${up + down} ms round trip, frames ${phase} ms out of step: ${r.drawn} drawn for ${r.fired} fired`);
+      assert.deepEqual([r.standIns, r.copies], [r.fired, 0], `${up + down} ms round trip, frames ${phase} ms out of step: ${r.standIns} stand-ins and ${r.copies} copies drawn for ${r.fired} fired`);
     }
   }
   const scatter = holdTrigger(createGunPredictor(), 7, 0, 0, { ...GUN, rate: 1.1, pellets: 6 });
-  assert.equal(scatter.drawn, scatter.fired, 'a scattergun at no lag');
-  const fast = holdTrigger(createGunPredictor(), 7, 0, 0, { ...GUN, rate: 16 });
-  assert.equal(fast.drawn, fast.fired, 'the fastest gun in the game (Dart in Overdrive) at no lag');
+  assert.deepEqual([scatter.standIns, scatter.copies], [scatter.fired, 0], 'a scattergun at no lag');
+  const fast = holdTrigger(createGunPredictor(), 7, 75, 75, { ...GUN, rate: 16 });
+  assert.deepEqual([fast.standIns, fast.copies], [fast.fired, 0], 'the fastest gun in the game (Dart in Overdrive)');
 });
 
 test('a stand-in the server never answers stops waiting, so a later shot is not hidden by mistake', () => {

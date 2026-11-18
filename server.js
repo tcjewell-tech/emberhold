@@ -13,6 +13,7 @@ const PUBLIC = join(import.meta.dirname, 'public');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
 const TICK = 1 / 60;
 const SLOTS = TEAMS.length * TEAM_SIZE;
+const VOLLEYS = 3; // shoot orders a seat may have waiting: enough for a jittery line to bunch a fast gun's, no more
 const FLOOD = 1000; // messages one connection may send per heartbeat; a real client sends about 150
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const num = (v) => (Number.isFinite(v) ? v : 0);
@@ -22,7 +23,8 @@ const cell = (c) => (c && Number.isInteger(c.cx) && Number.isInteger(c.cy) ? { c
 
 /** Everything a client sends is untrusted: rebuild its input from scratch with known types. */
 function readInput(m, seat) {
-  seat.held = { mx: clamp(num(m.mx), -1, 1), my: clamp(num(m.my), -1, 1), aim: angle(num(m.aim)), fire: m.fire === true, use: m.use === true };
+  seat.held = { mx: clamp(num(m.mx), -1, 1), my: clamp(num(m.my), -1, 1), aim: angle(num(m.aim)), use: m.use === true };
+  if (m.shoot === true) seat.shots = Math.min(seat.shots + 1, VOLLEYS);
   if (m.q === true) seat.q = true;
   if (m.r === true) seat.r = true;
   if (Number.isSafeInteger(m.seq) && m.seq > 0) seat.seq = m.seq; // echoed in snapshots so the client can tell lag from error
@@ -57,10 +59,13 @@ function sameSite({ origin, req }) {
 /** Test aid: hold each message back as a slow, uneven line would. Order is kept, as TCP keeps it. */
 function slowLine(ms, jitter) {
   let due = 0;
+  const waiting = [];
   return (deliver) => {
     if (!ms && !jitter) return deliver();
     due = Math.max(due, performance.now() + ms + Math.random() * jitter);
-    setTimeout(deliver, due - performance.now());
+    waiting.push(deliver);
+    // Each timer delivers the oldest message waiting, not its own: two that fall due in the same millisecond may fire in either order.
+    setTimeout(() => waiting.shift()(), due - performance.now());
   };
 }
 
@@ -123,7 +128,7 @@ export async function startServer({
     clearTimeout(idle);
     game ??= Object.assign(newGame(seed++), { endless: endless === true }); // whoever starts the match picks its mode
     ws.slot = slot;
-    seats.set(slot, { ws, key, held: {}, q: false, r: false, seq: 0, orders: [] });
+    seats.set(slot, { ws, key, held: {}, q: false, r: false, shots: 0, seq: 0, orders: [] });
     send(ws, { t: 'joined', slot });
     tellAll();
   }
@@ -178,15 +183,24 @@ export async function startServer({
     }
   }, beat);
 
+  /**
+   * A player's gun fires once for each `shoot` order, not for as long as a trigger is held: the client sends an order
+   * with every volley it draws, so both sides count the same shots however the line treats the press and the release.
+   * The sim still paces them. An order waits (as `fire` held down) until the hero's own cooldown lets the volley go,
+   * so sending orders faster than the gun fires gains nothing.
+   */
   function tick() {
+    const cooling = game.heroes.map((h) => h.fireCd);
     const inputs = game.heroes.map((h) => {
       const seat = seats.get(h.i);
       if (!seat) return botInput(game, h.i); // bots build on every team, a human's included
-      const inp = { ...seat.held, q: seat.q, r: seat.r, ...seat.orders.shift() };
+      if (!h.alive || h.stun > 0 || game.phase === 'over') seat.shots = 0; // it cannot fire: what it asked for lapses, and does not go off when it gets up
+      const inp = { ...seat.held, fire: seat.shots > 0, q: seat.q, r: seat.r, ...seat.orders.shift() };
       seat.q = seat.r = false;
       return inp;
     });
     step(game, inputs, TICK);
+    for (const [i, seat] of seats) if (seat.shots && game.heroes[i].fireCd > cooling[i]) seat.shots--; // only firing raises a cooldown
   }
 
   let last = performance.now(), owed = 0, ticks = 0;

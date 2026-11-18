@@ -244,6 +244,38 @@ test('each snapshot carries the server tick and the last input heard from every 
   await a.close();
 });
 
+test('a gun fires one volley for each shoot order, however they arrive, and never for a held trigger', async (t) => {
+  const { port } = await withServer(t, {
+    newGame(seed) {
+      const g = createGame(seed);
+      g.heroes[AMBER_DART].stun = 0.5; // it cannot fire at first
+      return g;
+    },
+  });
+  const a = await connect(port);
+  const volleys = () => new Set(a.inbox.filter(isState).flatMap((m) => m.s.shots.filter((sh) => sh.owner === AMBER_DART).map((sh) => sh.id))).size;
+  const play = async (seconds) => a.next(stateAfter(a.inbox.findLast(isState).s.t + seconds), `${seconds} s of play`);
+  a.send({ t: 'join', slot: AMBER_DART });
+  await a.next(isState, 'a state');
+
+  for (let k = 0; k < 2; k++) a.send({ t: 'input', aim: 0, shoot: true });
+  await play(1);
+  assert.equal(volleys(), 0, 'orders given while it was stunned lapse: they do not go off when it recovers');
+
+  a.send({ t: 'input', aim: 0, fire: true }); // a trigger held down, as clients once sent it
+  await play(0.5);
+  assert.equal(volleys(), 0, 'holding a trigger fires nothing');
+
+  for (let k = 0; k < 3; k++) a.send({ t: 'input', aim: 0, shoot: true }); // three at once, as a jittery line bunches them
+  await play(1);
+  assert.equal(volleys(), 3, 'three orders, three shots, a cooldown apart');
+
+  for (let k = 0; k < 8; k++) a.send({ t: 'input', aim: 0, shoot: true });
+  await play(1.5);
+  assert.equal(volleys(), 6, 'no more than three wait at once: a flood of orders does not bank shots');
+  await a.close();
+});
+
 test('an input is marked done only once its build order has been tried, even when several arrive together', async (t) => {
   const cells = [];
   const { port } = await withServer(t, {
