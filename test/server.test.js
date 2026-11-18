@@ -153,7 +153,8 @@ test('malformed and hostile messages are ignored and the match carries on', asyn
 });
 
 test('bots build on every team, including one with a human on it', async (t) => {
-  const { port } = await withServer(t);
+  const rich = (seed) => { const g = createGame(seed); for (const T of g.teams) T.scrap = 100; return g; }; // enough to build and keep the human's reserve
+  const { port } = await withServer(t, { newGame: rich });
   const a = await connect(port);
   a.send({ t: 'join', slot: AMBER_DART });
   const { s } = await a.next(stateAfter(2), 'two seconds of play');
@@ -458,4 +459,14 @@ test('whoever starts the match picks endless mode, and it survives Play again', 
   b.send({ t: 'join', slot: 0, key: 'k', endless: 'yes' });
   assert.equal((await b.next(isState, 'a state')).s.endless, false, 'only a plain true turns it on');
   await b.close();
+});
+
+test('bots on a team with a human leave them the Scrap reserve; a team of bots spends it all', async (t) => {
+  const { port } = await withServer(t, { newGame: (seed) => Object.assign(createGame(seed), { wrecks: [] }) }); // nothing to scavenge: 60 Scrap a team, for good
+  const a = await connect(port);
+  a.send({ t: 'join', slot: AMBER_DART });
+  const { s } = await a.next(stateAfter(1.5), 'a second and a half of play');
+  assert.deepEqual([s.teams[0].scrap, s.structs.filter((st) => st.team === 0).length], [60, 0], 'the bot Cog beside a human builds nothing: a Turret would leave 30');
+  assert.deepEqual([s.teams[1].scrap, s.structs.filter((st) => st.team === 1).length], [0, 2], 'the all-bot team has spent the lot on two Turrets');
+  await a.close();
 });

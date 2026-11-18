@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as S from '../public/sim.js';
-import { botInput, nextPiece } from '../public/bots.js';
+import { botInput, nextPiece, RESERVE } from '../public/bots.js';
 
 const DT = 1 / 60;
 const AMBER = 0, AZURE = S.TEAM_SIZE;
@@ -280,6 +280,20 @@ test('the Anvil bot raids a step ahead of its Dart, never alone', () => {
   assert.equal(Math.hypot(ahead.mx, ahead.my), 0, 'holds its place in front');
   Object.assign(dart, { alive: false, hp: 0 });
   assert.ok(heading(botInput(g, anvil.i), anvil, em) > 0.9, 'Dart down: heads home');
+});
+
+test('a bot Cog on a team with a human leaves the reserve in the pool, and spends freely once the team has 80', () => {
+  const g = quiet(), cog = g.heroes[AMBER + COG], turret = S.buildCost('cog', 'turret');
+  const builds = (scrap, reserve) => {
+    g.teams[0].scrap = scrap;
+    return botInput(g, cog.i, true, reserve).build !== null;
+  };
+  assert.equal(nextPiece(g, cog).type, 'turret', 'the first piece of the base is a Turret');
+  assert.ok(builds(turret, 0), 'on a team of bots it spends its last Scrap');
+  assert.ok(!builds(turret, RESERVE), 'beside a human it does not');
+  assert.ok(!builds(turret + RESERVE - 1, RESERVE), 'nor when building would leave one Scrap less than the reserve');
+  assert.ok(builds(turret + RESERVE, RESERVE), 'it builds when the reserve is left whole');
+  assert.ok(builds(80, RESERVE), 'and with 80 in the pool');
 });
 
 // ---------------------------------------------------------------- Shield Generators and the Forge bot

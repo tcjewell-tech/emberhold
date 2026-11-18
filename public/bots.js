@@ -36,11 +36,15 @@ const BLUEPRINTS = TEAMS.map((T) => {
   ];
 });
 
-/** The next missing blueprint piece the team can afford, or null (save up, or nothing left). */
-export function nextPiece(s, h) {
+// Scrap a bot leaves in the pool when a human is on its team, so that it never takes the last of what they are saving.
+// A team with 80 or more is free to spend: no piece costs more than 45, so that follows from the reserve by itself.
+export const RESERVE = 35;
+
+/** The next missing blueprint piece the team can afford and still keep `reserve` Scrap, or null (save up, or nothing left). */
+export function nextPiece(s, h, reserve = 0) {
   for (const p of BLUEPRINTS[h.team]) {
     if (structAt(s, p.cx, p.cy)) continue;
-    if (s.teams[h.team].scrap < buildCost(h.kind, p.type)) return null;
+    if (s.teams[h.team].scrap - reserve < buildCost(h.kind, p.type)) return null;
     const why = canBuild(s, h.i, p.type, p.cx, p.cy);
     if (why === null || why === 'range') return { ...p, ready: why === null };
   }
@@ -136,7 +140,7 @@ function incoming(s, team) {
 }
 
 /** spend: whether this bot may use its team's Scrap (false when a human is on the team). */
-export function botInput(s, i, spend = true) {
+export function botInput(s, i, spend = true, reserve = 0) {
   const h = s.heroes[i];
   const out = { mx: 0, my: 0, aim: h.aim, fire: false, use: false, q: false, r: false, build: null, remove: null };
   if (!h.alive) return out;
@@ -172,7 +176,7 @@ export function botInput(s, i, spend = true) {
   } else if (outmatched) {
     fixed = true; // straight home to its post, shooting back but not stopping to duel
   } else if (roam) {
-    const piece = spend && h.kind === 'cog' ? nextPiece(s, h) : null;
+    const piece = spend && h.kind === 'cog' ? nextPiece(s, h, reserve) : null;
     // The Dart leads the raid. An Anvil goes only as its bodyguard: alone it is too slow to get back out.
     const lead = h.kind === 'anvil' ? mates.find((o) => o.kind === 'dart') : null;
     const rival = raider && (lead || h.kind === 'dart') ? raidTarget(s, h) : null;

@@ -8,7 +8,7 @@ import { isIP } from 'node:net';
 import { createDeflateRaw, constants } from 'node:zlib';
 import { WebSocketServer } from 'ws';
 import { createGame, step, snapshot, STRUCTS, TEAMS, TEAM_SIZE, teamOf } from './public/sim.js';
-import { botInput } from './public/bots.js';
+import { botInput, RESERVE } from './public/bots.js';
 
 const PUBLIC = join(import.meta.dirname, 'public');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
@@ -212,9 +212,10 @@ export async function startServer({
    */
   function tick() {
     const cooling = game.heroes.map((h) => h.fireCd);
+    const crewed = new Set(Array.from(seats.keys(), teamOf)); // the teams with a human on them
     const inputs = game.heroes.map((h) => {
       const seat = seats.get(h.i);
-      if (!seat) return botInput(game, h.i); // bots build on every team, a human's included
+      if (!seat) return botInput(game, h.i, true, crewed.has(h.team) ? RESERVE : 0); // bots build on every team, but leave a human's team its reserve
       if (!h.alive || h.stun > 0 || game.phase === 'over') seat.shots = 0; // it cannot fire: what it asked for lapses, and does not go off when it gets up
       const inp = { ...seat.held, fire: seat.shots > 0, q: seat.q, r: seat.r, ...seat.orders.shift() };
       seat.q = seat.r = false;
