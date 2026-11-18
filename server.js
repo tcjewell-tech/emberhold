@@ -117,7 +117,7 @@ export async function startServer({
   });
 
   // Snapshots are the whole state as JSON. Each one is nearly the same as the last, so one
-  // deflate stream per player takes about 650 KB/s down to about 25. It is done here rather than
+  // deflate stream per player takes about 700 KB/s down to about 40. It is done here rather than
   // by the WebSocket's own compression, which some hosts' proxies strip (Render's does).
   const wss = new WebSocketServer({ server: http, maxPayload: 2048, verifyClient: (info) => known(info.req) && sameSite(info) });
   const humans = () => Array.from({ length: SLOTS }, (_, i) => seats.has(i));

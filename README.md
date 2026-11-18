@@ -29,7 +29,7 @@ The scoreboard is keyboard-only for now.
 
 ## Play over the internet
 
-The game is built to play over the internet: each player uses about 25 KB/s, your own hero
+The game is built to play over the internet: each player uses about 40 KB/s, your own hero
 answers your keys at once whatever the lag, your shots, the structures you place and Dart's Dash
 happen on screen at once too, and a dropped connection reconnects by itself and gives you your hero back (an empty
 match is kept for 60 seconds). Hits still land when the server hears them.

@@ -218,7 +218,7 @@ export function createFxPredictor(patience = 1000) {
 /**
  * Reads the server's messages. Every message arrives as one stream of raw-deflate data
  * (newline-separated JSON), compressed by the server itself: some hosts' proxies strip the
- * WebSocket's own compression, which would send each player about 260 KB/s instead of about 25.
+ * WebSocket's own compression, which would send each player about 700 KB/s instead of about 40.
  * Returns feed(data): pass it each message's ArrayBuffer, in order.
  */
 export function createUnpacker(onMessage) {
