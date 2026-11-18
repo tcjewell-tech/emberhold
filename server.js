@@ -3,7 +3,8 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join, extname } from 'node:path';
-import { networkInterfaces } from 'node:os';
+import { networkInterfaces, hostname } from 'node:os';
+import { isIP } from 'node:net';
 import { createDeflateRaw, constants } from 'node:zlib';
 import { WebSocketServer } from 'ws';
 import { createGame, step, snapshot, STRUCTS, TEAMS, TEAM_SIZE, teamOf } from './public/sim.js';
@@ -45,7 +46,7 @@ const doneTo = (seat) => (seat.orders.length ? seat.orders[0].seq - 1 : seat.seq
 /**
  * A browser names the page that opened a WebSocket in its Origin header and lets any page open one, so without
  * this a site the player visits could join, flood or restart a match bound to this computer. No Origin is a
- * non-browser client (a test), which the bind already decides about. Does not stop DNS rebinding.
+ * non-browser client (a test), which the bind already decides about. DNS rebinding passes it: see ownHost.
  */
 function sameSite({ origin, req }) {
   if (!origin) return true;
@@ -53,6 +54,23 @@ function sameSite({ origin, req }) {
     return new URL(origin).host === String(req.headers.host).toLowerCase();
   } catch {
     return false; // e.g. "null" from a file:// page
+  }
+}
+
+const NAMES = new Set(['localhost', hostname().toLowerCase(), `${hostname().toLowerCase()}.local`]);
+
+/**
+ * DNS rebinding: a site can point its own name at this computer, and its page's requests then carry that name
+ * as Host and as Origin, so sameSite lets them in. A Host that is an IP address or one of this computer's own
+ * names cannot be a rebound page's, so only those are served. Skipped on a public host (Render), where a name
+ * is how everyone arrives and anyone may connect anyway.
+ */
+function ownHost(host) {
+  try {
+    const name = new URL(`http://${host}`).hostname;
+    return isIP(name.replace(/^\[|\]$/g, '')) > 0 || NAMES.has(name);
+  } catch {
+    return false; // missing or malformed Host
   }
 }
 
@@ -74,15 +92,18 @@ function slowLine(ms, jitter) {
  * grace: seconds an empty match is kept, so a dropped connection is not the end of it.
  * beat: ms between heartbeats; a connection silent for a whole beat is dropped.
  * lag, jitter: simulate a slow line (round-trip ms, plus up to jitter ms each way) to try the game under internet conditions.
+ * anyHost: serve any Host name (a public host reached by its domain); otherwise only IP addresses and this computer's names.
  */
 export async function startServer({
   port = 3000, host = '127.0.0.1', seed = Date.now() & 0x7fffffff, newGame = createGame,
-  grace = 60, beat = 5000, maxClients = 40, lag = 0, jitter = 0,
+  grace = 60, beat = 5000, maxClients = 40, lag = 0, jitter = 0, anyHost = false,
 } = {}) {
   let game = null, idle = null;
   const seats = new Map(); // hero slot -> { ws, key, held, q, r, seq, orders } for each human player
+  const known = (req) => anyHost || ownHost(req.headers.host);
 
   const http = createServer(async (req, res) => {
+    if (!known(req)) return res.writeHead(403).end();
     // public/ is flat, and only a literal file name is ever served, so no path can climb out of it.
     const path = req.url.split('?')[0];
     const name = path === '/' ? 'index.html' : path.slice(1);
@@ -98,7 +119,7 @@ export async function startServer({
   // Snapshots are the whole state as JSON. Each one is nearly the same as the last, so one
   // deflate stream per player takes about 650 KB/s down to about 25. It is done here rather than
   // by the WebSocket's own compression, which some hosts' proxies strip (Render's does).
-  const wss = new WebSocketServer({ server: http, maxPayload: 2048, verifyClient: sameSite });
+  const wss = new WebSocketServer({ server: http, maxPayload: 2048, verifyClient: (info) => known(info.req) && sameSite(info) });
   const humans = () => Array.from({ length: SLOTS }, (_, i) => seats.has(i));
   const post = (ws, text) => ws.down(() => {
     if (ws.readyState !== 1) return;
@@ -240,10 +261,12 @@ export async function startServer({
 }
 
 if (import.meta.main) {
-  const lan = process.argv.includes('--lan') || process.env.RENDER === 'true'; // Render sets RENDER; its proxy needs us on every interface
+  const render = process.env.RENDER === 'true'; // Render sets RENDER; its proxy needs us on every interface, reached by its domain
+  const lan = process.argv.includes('--lan') || render;
   const flag = (name) => Number(process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1]) || 0;
   const lag = flag('lag'), jitter = flag('jitter');
-  const { port } = await startServer({ port: Number(process.env.PORT) || 3000, host: lan ? '0.0.0.0' : '127.0.0.1', lag, jitter });
+  const anyHost = render || process.argv.includes('--any-host');
+  const { port } = await startServer({ port: Number(process.env.PORT) || 3000, host: lan ? '0.0.0.0' : '127.0.0.1', lag, jitter, anyHost });
   if (lag || jitter) console.log(`Simulating a slow line: ${lag} ms round trip, up to ${jitter} ms of jitter each way.`);
   console.log(`Emberhold is running: http://localhost:${port}`);
   if (lan) {
