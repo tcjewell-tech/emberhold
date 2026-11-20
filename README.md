@@ -77,16 +77,19 @@ every second night from night 12.
 |---|---|
 | Blood Moon | AI enemies move 25% faster and notice heroes from 60% further off |
 | Iron Tide | Twice the Breakers, and AI enemies do 25% more damage to structures (not to Embers) |
-| Ash Storm | Turrets and Sentries see three quarters as far, and AI enemies arrive with a 35-point shield |
-| Volatile | An AI enemy bursts when it dies: 28 damage to heroes, structures and other AI enemies within 75 units (not to Embers), and it pays 1 more Scrap |
+| Ash Storm | Turrets and Sentries see three quarters as far, and AI enemies arrive with a shield that goes before their health: 32 points on night 3, 42 on night 6, and more each night |
+| Volatile | An AI enemy bursts when it dies, hurting heroes, structures and other AI enemies within 75 units (not Embers): 25 damage on night 3, 31 on night 6, and more each night. It pays 1 more Scrap |
 
 ## The Core
 
-From the second day, a Core appears in the middle of the map 12 seconds into each day. Stand a
-hero in its ring with no rival there and it fills in 6 seconds; with two teams in the ring it
-freezes, and a team arriving alone must first run down what a rival put in. The team that
-takes it gets 45 Scrap, 120 health back on its Ember, and 35% Ultimate charge and 6 seconds
-of Rush for each of its living heroes. It goes at dusk if nobody has taken it.
+On every other day from the second (days 2, 4, 6 and so on), a Core appears in the middle of
+the map 12 seconds into the day. Stand a hero in its ring with no rival there and it fills in
+6 seconds. With rivals in the ring too, numbers decide: the team with the most heroes there
+still fills it, at under half the pace, and equal numbers drain it slowly. A team that takes
+the ring over must first run down what a rival put in. The team that takes the Core gets 45
+Scrap, 120 health back on its Ember, and 35% Ultimate charge and 6 seconds of Rush for each
+of its living heroes. It goes at dusk if nobody has taken it. The days between have no Core:
+they are for raiding.
 
 ## Base alarm
 

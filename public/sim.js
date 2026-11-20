@@ -124,24 +124,43 @@ export const ENEMIES = {
  * ash_storm: Turrets and Sentries see less far, and AI enemies arrive with a shield that soaks damage before their health.
  * volatile: an AI enemy bursts as it dies, hurting the heroes, structures (not Embers) and other AI enemies around it
  * (so packs go off in chains), and is worth one more Scrap.
+ * The shield and the blast are what they would be on a first night, and grow with the night as AI enemies do: shieldGrow
+ * and blastGrow of that more for each level after the first (ashShield, volatileBlast). The first Eclipse is on night 3,
+ * where they come to 32 and 25.5, a little under the flat 35 and 28 they used to be; by night 6 they are 42 and 30.8.
  */
 export const ECLIPSES = {
   blood_moon: { name: 'Blood Moon', speed: 1.25, aggro: 1.6, text: 'AI enemies are faster and hunt heroes from further off' },
   iron_tide: { name: 'Iron Tide', breakers: 2, structDmg: 1.25, text: 'Twice the Breakers, and structures take more damage' },
-  ash_storm: { name: 'Ash Storm', turretRange: 0.75, shield: 35, text: 'Turrets see less far, and AI enemies come shielded' },
-  volatile: { name: 'Volatile', blast: 28, r: 75, scrap: 1, text: 'AI enemies burst when they die' },
+  ash_storm: { name: 'Ash Storm', turretRange: 0.75, shield: 26, shieldGrow: 0.12, text: 'Turrets see less far, and AI enemies come shielded' },
+  volatile: { name: 'Volatile', blast: 22, blastGrow: 0.08, r: 75, scrap: 1, text: 'AI enemies burst when they die' },
 };
 export const ECLIPSE_IDS = Object.keys(ECLIPSES);
 /** What tonight's Eclipse sets a number to, or `none` when there is no Eclipse or it leaves that number alone. */
 const eclipsed = (s, k, none = 1) => ECLIPSES[s.eclipse]?.[k] ?? none;
+const grown = (s, base, grow) => base * (1 + grow * Math.max(0, level(s) - 1));
+/** The shield an AI enemy arrives with under an Ash Storm tonight, and what a Volatile burst does tonight. */
+export const ashShield = (s) => Math.round(grown(s, ECLIPSES.ash_storm.shield, ECLIPSES.ash_storm.shieldGrow));
+export const volatileBlast = (s) => grown(s, ECLIPSES.volatile.blast, ECLIPSES.volatile.blastGrow);
+/**
+ * What an Eclipse does that no number in its row can say, by the moment it happens: `spawn(s, e)` as an AI enemy
+ * arrives, `death(s, e, team)` as one dies (team: its killer's, or -1). An Eclipse with a rule of its own puts it here
+ * and touches nothing else; spawnEnemy and hurtEnemy call whatever tonight's has.
+ */
+export const ECLIPSE_HOOKS = {
+  ash_storm: { spawn: (s, e) => void (e.shield = ashShield(s)) },
+  volatile: { death: burst },
+};
+const hook = (s, when, ...args) => ECLIPSE_HOOKS[s.eclipse]?.[when]?.(s, ...args);
 
 /**
- * The Core: from the second day on it appears mid-map spawnDelay seconds into the day, and goes at dusk or when taken.
- * A team with a living hero within radius, and no rival there, fills it over captureTime seconds, after first
- * running down whatever a rival had put in. With two teams there nothing moves; with none it drains at decayRate.
+ * The Core: on every other day from the second (days 2, 4, 6...) it appears mid-map spawnDelay seconds into the day, and
+ * goes at dusk or when taken; the days between are left for raiding. A team with a living hero within radius, and no rival
+ * there, fills it over captureTime seconds, after first running down whatever a rival had put in, a second a second.
+ * With rivals there too, the team with the most heroes in the ring still has it, but slower: it runs a rival's progress
+ * down at contestedRundown and fills at contestedRate. A tie for the most drains it at tieDecay, and an empty ring at decayRate.
  * Taking it pays the team Scrap, mends its Ember, and gives each of its living heroes Ultimate charge and `rush` seconds of Rush.
  */
-export const CORE_DEF = { spawnDelay: 12, radius: 110, captureTime: 6, decayRate: 0.5, scrapReward: 45, emberHeal: 120, ultGrant: 35, rush: 6 };
+export const CORE_DEF = { spawnDelay: 12, radius: 110, captureTime: 6, decayRate: 0.5, contestedRate: 0.45, contestedRundown: 0.75, tieDecay: 0.2, scrapReward: 45, emberHeal: 120, ultGrant: 35, rush: 6 };
 
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
 const IDLE = {};
@@ -359,20 +378,34 @@ function hurtEnemy(s, e, dmg, team, owner) {
   if (team >= 0) s.teams[team].scrap += ENEMIES[e.type].bounty + eclipsed(s, 'scrap', 0);
   if (owner >= 0) s.heroes[owner].stats.kills++;
   addFx(s, 'pop', e.x, e.y, ENEMIES[e.type].r * 2, -1);
-  if (s.eclipse === 'volatile') burst(s, e, team);
+  hook(s, 'death', e, team);
   if (rand(s) < DROP[e.type]) {
     const kinds = Object.keys(POWERUPS);
     s.pickups.push({ id: s.nextId++, kind: kinds[Math.floor(rand(s) * kinds.length)], x: e.x, y: e.y, ttl: PICKUP_TTL });
   }
 }
 
-/** A Volatile night: a dying AI enemy bursts. Whoever killed it is paid for the AI enemies its burst kills in turn, but gets no credit for the damage. */
+/**
+ * A Volatile night: a dying AI enemy bursts. Whoever killed it is paid for the AI enemies its burst kills in turn, but
+ * gets no credit for the damage. A burst that kills sets off more: they wait in `chain` and go off in turn inside the
+ * first one's call, so a pack of any size goes up without a deeper stack. `chain` is empty again when that call returns.
+ */
+const chain = [];
 function burst(s, e, team) {
-  const V = ECLIPSES.volatile, near = (o) => dist2(e.x, e.y, o.x, o.y) < V.r * V.r;
-  addFx(s, 'blast', e.x, e.y, V.r, -1);
-  for (const h of s.heroes) if (near(h)) hurtHero(s, h, V.blast, -1, -1);
-  for (const st of [...s.structs]) if (near(st)) hurtStruct(s, st, V.blast, -1);
-  for (const o of s.enemies) if (near(o)) hurtEnemy(s, o, V.blast, team, -1); // e itself is dead already, so the chain ends
+  chain.push(e);
+  if (chain.length > 1) return; // set off by a burst still going off below us on the stack: it comes to this one in turn
+  const V = ECLIPSES.volatile, r2 = V.r * V.r, dmg = volatileBlast(s);
+  try {
+    for (let n = 0; n < chain.length; n++) { // every death in the chain is the first killer's, so `team` holds for them all
+      const { x, y } = chain[n], near = (o) => dist2(x, y, o.x, o.y) < r2;
+      addFx(s, 'blast', x, y, V.r, -1);
+      for (const h of s.heroes) if (near(h)) hurtHero(s, h, dmg, -1, -1);
+      for (let k = s.structs.length - 1; k >= 0; k--) if (near(s.structs[k])) hurtStruct(s, s.structs[k], dmg, -1); // backwards: one that falls is cut out behind us
+      for (const o of s.enemies) if (near(o)) hurtEnemy(s, o, dmg, team, -1); // the dead are passed over; one that dies here joins the chain
+    }
+  } finally {
+    chain.length = 0;
+  }
 }
 
 function hurtHero(s, h, dmg, team, owner) {
@@ -718,7 +751,7 @@ export function spawnEnemy(s, type, team, x, y) {
   const e = { id: s.nextId++, type, team, x, y, hp, max: hp, cd: 0, stun: 0 };
   keepIn(e, ENEMIES[type].r + 4); // a spawn point out over the water comes ashore at the edge
   if (def.slam) e.slam = def.slam.every;
-  if (eclipsed(s, 'shield', 0)) e.shield = eclipsed(s, 'shield', 0);
+  hook(s, 'spawn', e);
   s.enemies.push(e);
   return e;
 }
@@ -922,19 +955,30 @@ export function startDay(s) {
   spawnWrecks(s);
 }
 
+/**
+ * Who is in the Core's ring: `n`, the living heroes each standing team has there; `teams`, how many teams that is; and
+ * `lead`, the team with more heroes there than any other (-1: nobody is there, or the most are tied). The one test of
+ * presence: updateCore decides by it and the client colours the ring by it.
+ */
+export function coreContestants(s) {
+  const c = s.core, r2 = CORE_DEF.radius * CORE_DEF.radius;
+  const n = s.teams.map((T, k) => (T.alive ? s.heroes.filter((h) => h.alive && h.team === k && dist2(h.x, h.y, c.x, c.y) <= r2).length : 0));
+  const top = Math.max(...n);
+  return { n, teams: n.filter((v) => v > 0).length, lead: top > 0 && n.indexOf(top) === n.lastIndexOf(top) ? n.indexOf(top) : -1 };
+}
+
 function updateCore(s, dt) {
-  const c = s.core, D = CORE_DEF;
-  const here = s.teams.flatMap((T, k) => (T.alive && s.heroes.some((h) => h.alive && h.team === k && dist2(h.x, h.y, c.x, c.y) <= D.radius * D.radius) ? [k] : []));
-  if (here.length > 1) return; // contested: nothing moves
-  if (!here.length) {
-    c.prog = Math.max(0, c.prog - D.decayRate * dt);
+  const c = s.core, D = CORE_DEF, { teams, lead } = coreContestants(s);
+  if (lead < 0) { // nobody there, or a tie: what is in it drains away
+    c.prog = Math.max(0, c.prog - (teams ? D.tieDecay : D.decayRate) * dt);
     if (!c.prog) c.team = -1;
     return;
   }
-  const k = here[0];
-  if (c.team !== k && c.prog > 0) return void (c.prog = Math.max(0, c.prog - dt)); // a rival's progress is run down first, a second a second
+  // The team with the most heroes there has it: alone at full pace, outnumbering a rival at the contested pace.
+  const k = lead, fought = teams > 1;
+  if (c.team !== k && c.prog > 0) return void (c.prog = Math.max(0, c.prog - (fought ? D.contestedRundown : 1) * dt)); // a rival's progress is run down first
   c.team = k;
-  c.prog += dt;
+  c.prog += (fought ? D.contestedRate : 1) * dt;
   if (c.prog < D.captureTime) return;
   const T = s.teams[k];
   T.scrap += D.scrapReward;
@@ -954,7 +998,7 @@ export function step(s, inputs, dt = 1 / 60) {
   if (s.phase === 'day') {
     s.timer -= dt;
     if (s.timer <= 0) startNight(s);
-    else if (s.wave >= 1 && !s.coreSpawned && DAY_LENGTH - s.timer >= CORE_DEF.spawnDelay) {
+    else if (s.wave >= 1 && s.wave % 2 === 1 && !s.coreSpawned && DAY_LENGTH - s.timer >= CORE_DEF.spawnDelay) { // days 2, 4, 6...
       s.core = { x: ARENA.x, y: ARENA.y, team: -1, prog: 0 };
       s.coreSpawned = true;
     }

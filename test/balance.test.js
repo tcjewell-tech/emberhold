@@ -31,6 +31,8 @@ const QUICK = { matches: 12, firstSeed: 1, dmg: 0.3, deaths: [0.33, 2], minutes:
 // on average, the last Ember alone for 0.7 min of it, every piece of the leading base upgraded; last standing Amber 10, Azure 11, Jade 9.
 // History: 21.7 min and 17.0 nights before upgrades (bounds 14 to 20 nights, 18 to 26 minutes); upgrades alone made it 24.9 and 19.5
 // (bounds moved to 16 to 23 and 21 to 29); Eclipses, which make every third night harder, brought it back, and the first bounds with it.
+// 2026-11-20, with the Core on every other day and decided by numbers when contested, and Eclipses that grow with the night:
+// 21.7 min and 17.2 nights, the last Ember alone for 0.9 min; last standing Amber 11, Azure 11, Jade 8. The bounds stayed.
 // A match costs about three times a normal one to play, hence only ten under npm test.
 const ENDLESS = { matches: 10, firstSeed: 1, nights: [14, 20], minutes: [18, 26], alone: [0.3, 4], ups: 36, seats: 3 };
 
@@ -39,17 +41,27 @@ const LIMIT = 3600; // seconds of match time after which a match counts as unfin
 /**
  * job: { seed, endless }. alone: minutes the last Ember stood by itself (endless mode; a normal match ends the moment one is left).
  * ups: the most upgraded (tier-2) structures any one team had standing at once, looked at once a second.
+ * maxSnapBytes: the largest snapshot (the state as the JSON the server sends), also looked at once a second, so a peak
+ * shorter than that can be missed; ashSnapBytes: the same on Ash Storm nights alone, when every AI enemy carries a shield (0: none fell).
+ * cores: how many Cores each team took.
  */
 function playMatch({ seed, endless = false }) {
   const g = Object.assign(S.createGame(seed), { endless });
-  let last = -1, ups = 0; // last: when only one Ember was left
+  let last = -1, ups = 0, maxSnapBytes = 0, ashSnapBytes = 0; // last: when only one Ember was left
+  const cores = S.TEAMS.map(() => 0);
   for (let n = 0; g.phase !== 'over' && g.t < LIMIT; n++) {
+    const core = g.core;
     S.step(g, g.heroes.map((h) => botInput(g, h.i)), 1 / 60);
+    if (core && !g.core && g.phase === 'day') cores[core.team]++; // gone before dusk: taken, by the team that was filling it
     if (last < 0 && g.teams.filter((T) => T.alive).length <= 1) last = g.t;
-    if (n % 60 === 0) ups = Math.max(ups, ...g.teams.map((_, k) => g.structs.filter((st) => st.team === k && st.tier === 2).length));
+    if (n % 60) continue;
+    ups = Math.max(ups, ...g.teams.map((_, k) => g.structs.filter((st) => st.team === k && st.tier === 2).length));
+    const bytes = Buffer.byteLength(JSON.stringify(g));
+    maxSnapBytes = Math.max(maxSnapBytes, bytes);
+    if (g.eclipse === 'ash_storm') ashSnapBytes = Math.max(ashSnapBytes, bytes);
   }
   return {
-    seed, endless, over: g.phase === 'over', winner: g.winner, minutes: g.t / 60, wave: g.wave, alone: last < 0 ? 0 : (g.t - last) / 60, ups,
+    seed, endless, over: g.phase === 'over', winner: g.winner, minutes: g.t / 60, wave: g.wave, alone: last < 0 ? 0 : (g.t - last) / 60, ups, maxSnapBytes, ashSnapBytes, cores,
     heroes: g.heroes.map((h) => ({ kind: h.kind, team: h.team, ...h.stats })),
   };
 }
@@ -99,6 +111,8 @@ function summarise(results, counts = () => true) {
   return {
     n, heroes, unfinished: results.filter((r) => !r.over).length, minutes: minutes / n, waves: results.reduce((t, r) => t + r.wave, 0) / n,
     alone: results.reduce((t, r) => t + r.alone, 0) / n, ups: results.reduce((t, r) => t + r.ups, 0) / n,
+    snap: results.reduce((t, r) => t + r.maxSnapBytes, 0) / n, maxSnapBytes: Math.max(...results.map((r) => r.maxSnapBytes)), ashSnapBytes: Math.max(...results.map((r) => r.ashSnapBytes)),
+    cores: S.TEAMS.map((_, k) => results.reduce((t, r) => t + r.cores[k], 0)),
     wins: S.TEAMS.map((_, k) => results.filter((r) => r.winner === k).length), draws: results.filter((r) => r.over && r.winner < 0).length,
   };
 }
@@ -114,6 +128,12 @@ function table(sum) {
 }
 
 const tally = (sum) => S.TEAMS.map((T, k) => `${T.name} ${sum.wins[k]} (${Math.round((sum.wins[k] / sum.n) * 100)}%)`).join(', ');
+const kb = (bytes) => `${(bytes / 1000).toFixed(1)} KB`;
+/** Two lines both reports end their heading with: the Cores each team took, and how large the snapshots got. */
+const extras = (sum) => [
+  `Cores taken: ${S.TEAMS.map((T, k) => `${T.name} ${sum.cores[k]}`).join(', ')}`,
+  `Largest snapshot: ${kb(sum.snap)} in an average match, ${kb(sum.maxSnapBytes)} in any${sum.ashSnapBytes ? `; ${kb(sum.ashSnapBytes)} on an Ash Storm night` : ''}`,
+];
 
 function report(sum, seeds) {
   return [
@@ -121,6 +141,7 @@ function report(sum, seeds) {
     `Finished ${sum.n - sum.unfinished} of ${sum.n}; average ${sum.minutes.toFixed(1)} min, ${sum.waves.toFixed(1)} nights`,
     `Wins: ${tally(sum)}, draws ${sum.draws}`,
     `The most upgraded base in a match had ${sum.ups.toFixed(1)} tier-2 structures on average`,
+    ...extras(sum),
     '', ...table(sum), '',
   ].join('\n');
 }
@@ -132,6 +153,7 @@ function endlessReport(sum, last, seeds) {
     `Finished ${sum.n - sum.unfinished} of ${sum.n}; average ${sum.minutes.toFixed(1)} min, ${sum.waves.toFixed(1)} nights; the last Ember stood alone for ${sum.alone.toFixed(1)} min on average`,
     `Last standing: ${tally(sum)}, none ${sum.draws}`,
     `The most upgraded base in a match had ${sum.ups.toFixed(1)} tier-2 structures on average`,
+    ...extras(sum),
     '', 'The team that was last standing, a hero a match:', ...table(last), '',
   ].join('\n');
 }

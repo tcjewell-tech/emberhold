@@ -1,7 +1,7 @@
 // Emberhold's pixel art, drawn in code: no image files. Everything here works in art pixels
 // (one art pixel is two world units; the page scales the small canvas up with hard edges).
 // Sprites are painted once on their own little canvas, outlined, and cached.
-import { TEAMS, WORLD, CELL, ARENA, STRUCTS, CORE_DEF, ECLIPSES, inArena } from './sim.js';
+import { TEAMS, WORLD, CELL, ARENA, STRUCTS, CORE_DEF, inArena } from './sim.js';
 
 export const PX = 0.5; // art pixels per world unit
 export const TILE = CELL * PX;
@@ -192,12 +192,13 @@ export function createArt(g) {
       if (h.shieldMax) { const w = Math.round(18 * h.shield / h.shieldMax); S.R(x - 10, y - 40, 20, 3, INK); S.R(x - 9, y - 39, w, 1, '#bfe9ff'); }
       if (mine) { S.R(x - 2, y - (h.shieldMax ? 47 : 44), 5, 3, INK); S.R(x - 1, y - (h.shieldMax ? 46 : 43), 3, 1, '#ffffff'); S.R(x, y - (h.shieldMax ? 45 : 42), 1, 2, '#ffffff'); }
     },
-    enemy(e, x, y, t) {
+    /** shieldMax: what an Ash Storm's shield is at full tonight (it grows with the night), to measure e.shield against. */
+    enemy(e, x, y, t, shieldMax = e.shield) {
       const f = Math.floor(t / 150 + e.id) % 2, big = e.type === 'colossus', c = enemySprite(e.type, f, e.stun > 0), scale = big ? 2 : 1;
       shadow(x, y, (c.width * scale) / 2.4);
       put(c, x, y + 2, scale);
       if (e.hp < e.max) meter(x - 9 * scale, y - c.height * scale - 3, 18 * scale, e.hp / e.max, '#e58cff', big ? 3 : 2);
-      if (e.shield) meter(x - 9 * scale, y - c.height * scale - (big ? 7 : 6), 18 * scale, e.shield / ECLIPSES.ash_storm.shield, '#bfe9ff', 2); // an Ash Storm's shield, over the health it guards
+      if (e.shield) meter(x - 9 * scale, y - c.height * scale - (big ? 7 : 6), 18 * scale, e.shield / shieldMax, '#bfe9ff', 2); // an Ash Storm's shield, over the health it guards
     },
     /** Eyes that show through the dark. */
     eyes(e, x, y) {

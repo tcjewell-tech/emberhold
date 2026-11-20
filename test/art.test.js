@@ -58,7 +58,7 @@ test('everything the game can hold has a painter, and each one draws without thr
     const e = spawnEnemy(g, type, 0, 500, 500);
     art.enemy(e, 50, 50, 0); // a sprite, pasted with drawImage: nothing to count
     art.enemy({ ...e, stun: 1 }, 50, 50, 100);
-    drew(`a ${type} with an Ash Storm's shield`, () => art.enemy({ ...e, shield: 20 }, 50, 50, 100));
+    drew(`a ${type} with an Ash Storm's shield`, () => art.enemy({ ...e, shield: 20 }, 50, 50, 100, 43));
     drew(`the eyes of a ${type}`, () => art.eyes(e, 50, 50));
   }
   for (const h of g.heroes) {

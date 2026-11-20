@@ -298,17 +298,19 @@ test('a bot Cog on a team with a human leaves the reserve in the pool, and spend
 
 // ---------------------------------------------------------------- Shield Generators and the Forge bot
 
-test('the bot base adds Shield Generators after its first Turrets, and their fields cover every guard post', () => {
-  const g = quiet(), cog = g.heroes[AMBER + COG], types = [];
-  g.teams[0].scrap = 1e6;
-  for (let p; (p = nextPiece(g, cog)) && !p.up && types.length < 300;) {
-    types.push(p.type);
-    S.addStruct(g, p.type, 0, p.cx, p.cy).wait = 0;
+test('every team\'s bot base adds Shield Generators after its first Turrets, their fields cover every guard post, and each group of pieces goes up nearest mid-map first', () => {
+  const mid = { x: (S.TEAMS[0].x + S.TEAMS[1].x + S.TEAMS[2].x) / 3, y: (S.TEAMS[0].y + S.TEAMS[1].y + S.TEAMS[2].y) / 3 };
+  for (const team of [0, 1, 2]) {
+    const g = quiet(), cog = g.heroes[team * S.TEAM_SIZE + COG], built = [], name = S.TEAMS[team].name;
+    g.teams[team].scrap = 1e6;
+    for (let p; (p = nextPiece(g, cog)) && !p.up && built.length < 300;) built.push(Object.assign(S.addStruct(g, p.type, team, p.cx, p.cy), { wait: 0 }));
+    assert.deepEqual(built.slice(0, 6).map((st) => st.type), ['turret', 'turret', 'turret', 'turret', 'shield', 'shield'], name);
+    const gens = built.filter((st) => st.type === 'shield');
+    assert.equal(gens.length, 4);
+    for (let k = 0; k < S.TEAM_SIZE; k++) assert.ok(gens.some((st) => gap(st, S.post(team, k)) <= S.STRUCTS.shield.radius), `${name}: post ${k} is in a field`);
+    // A group is a run of one type. Listed in one order for all, Azure spiked its gate facing mid-map first and Jade its own seventh.
+    built.forEach((st, n) => n && built[n - 1].type === st.type && assert.ok(gap(st, mid) >= gap(built[n - 1], mid) - 1e-6, `${name}: piece ${n}, a ${st.type}, is nearer mid-map than the one before it`));
   }
-  assert.deepEqual(types.slice(0, 6), ['turret', 'turret', 'turret', 'turret', 'shield', 'shield']);
-  const gens = g.structs.filter((st) => st.type === 'shield');
-  assert.equal(gens.length, 4);
-  for (let k = 0; k < S.TEAM_SIZE; k++) assert.ok(gens.some((st) => gap(st, S.post(0, k)) <= S.STRUCTS.shield.radius), `post ${k} is in a field`);
 });
 
 test('the Forge bot goes to a broken structure at its base and Reforges it', () => {
@@ -400,11 +402,12 @@ test('with the Core standing by day, the Dart and the Anvil go and hold it; the 
   assert.ok(heading(botInput(g, dart.i), dart, core) < 0.5, 'and with its Ember under attack, home comes first');
 });
 
-test('on a Volatile night a bot backs away from an AI enemy that is about to burst', () => {
+test('on a Volatile night a bot backs away from an AI enemy that is about to burst, unless it is unhurt and the burst is small', () => {
   const g = quiet(), dart = place(g.heroes[AMBER + DART], MID.x, MID.y);
   g.phase = 'night';
   const e = S.spawnEnemy(g, 'skitter', 0, MID.x + 60, MID.y);
   e.hp = 25;
+  dart.hp = dart.max - 1;
   const steps = () => heading(botInput(g, dart.i), dart, e);
   const calm = steps();
   g.eclipse = 'volatile';
@@ -412,4 +415,74 @@ test('on a Volatile night a bot backs away from an AI enemy that is about to bur
   assert.ok(calm > -0.95, 'which it does not do on another night');
   e.hp = 40;
   assert.equal(steps(), calm, 'nor from one with health to spare');
+  e.hp = 25;
+  dart.hp = dart.max;
+  assert.equal(steps(), calm, 'at full health one small burst is not worth moving for');
+  S.spawnEnemy(g, 'skitter', 0, MID.x + 60, MID.y + 20).hp = 25;
+  assert.ok(steps() < -0.95, 'two are, and it backs away from the nearer');
+});
+
+test('how near death an AI enemy must be before a bot clears out grows with the enemy: a late Breaker long before a Skitter', () => {
+  const flees = (wave, type, hp, endless = false) => {
+    const g = Object.assign(quiet(), { wave, endless, phase: 'night', eclipse: 'volatile' }), dart = place(g.heroes[AMBER + DART], MID.x, MID.y);
+    dart.hp = dart.max - 1; // hurt at all, it can afford no burst
+    S.spawnEnemy(g, type, 0, MID.x + 60, MID.y).hp = hp;
+    return heading(botInput(g, dart.i), dart, g.enemies[0]) < -0.95;
+  };
+  // A Breaker has 260 health on night 1 and 780 on night 9: 16% of those is 41.6 and 124.8. A Skitter's 16% never passes the floor of 30 here.
+  assert.deepEqual([flees(1, 'breaker', 45), flees(1, 'breaker', 40)], [false, true]);
+  assert.deepEqual([flees(9, 'breaker', 130), flees(9, 'breaker', 120)], [false, true], 'on night 9 it leaves a Breaker with 120 left, four times what it used to wait for');
+  assert.deepEqual([flees(9, 'skitter', 31), flees(9, 'skitter', 30)], [false, true], 'the floor still holds for small ones');
+  assert.deepEqual([flees(9, 'breaker', 100, true), flees(9, 'breaker', 80, true)], [false, true], 'endless night 9 is as hard as night 5: 16% of 520 is 83.2');
+});
+
+test('on a Volatile night a medic at a dying teammate and a Fortified Anvil stay while they can afford it, and a Forge on a repair run keeps a wider berth', () => {
+  const night = () => Object.assign(quiet(), { phase: 'night', eclipse: 'volatile' });
+  const bomb = (g, x, y) => Object.assign(S.spawnEnemy(g, 'skitter', 0, x, y), { hp: 25 });
+
+  let g = night();
+  const patch = place(g.heroes[AMBER + PATCH], MID.x, MID.y), mate = place(g.heroes[AMBER + COG], MID.x - 120, MID.y);
+  patch.hp = patch.max - 1;
+  const e = bomb(g, MID.x + 60, MID.y);
+  mate.hp = mate.max * 0.25;
+  assert.ok(heading(botInput(g, patch.i), patch, mate) > 0.95, 'a teammate under 30%: the medic goes on to it past the burst');
+  mate.hp = mate.max * 0.5;
+  assert.ok(heading(botInput(g, patch.i), patch, e) < -0.95, 'one that can wait: it steps clear first');
+  mate.hp = mate.max * 0.25;
+  for (const dy of [8, 16, 24, 32]) bomb(g, MID.x + 60, MID.y + dy);
+  assert.ok(heading(botInput(g, patch.i), patch, e) < -0.95, 'and five bursts at once would cost it most of its own health: it steps clear');
+
+  g = night();
+  const anvil = place(g.heroes[AMBER + ANVIL], MID.x, MID.y);
+  anvil.hp = anvil.max - 1;
+  bomb(g, MID.x + 60, MID.y);
+  const flees = () => heading(botInput(g, anvil.i), anvil, g.enemies[0]) < -0.95;
+  assert.ok(flees(), 'an Anvil that is hurt steps clear');
+  anvil.fortify = 3;
+  assert.ok(!flees(), 'Fortified, it takes a quarter of the burst and stays in the fight');
+
+  g = night();
+  const em = g.teams[0].ember, wall = S.addStruct(g, 'wall', 0, em.x / S.CELL + 5, em.y / S.CELL);
+  wall.hp = 100;
+  bomb(g, wall.x - 160, wall.y); // 90 from the two heroes below: outside a burst's 75, inside a Forge's berth
+  const walks = (k) => {
+    const h = place(g.heroes[AMBER + k], wall.x - 250, wall.y), was = (g.eclipse = null, botInput(g, h.i));
+    g.eclipse = 'volatile';
+    return [heading(was, h, wall), heading(botInput(g, h.i), h, wall), was];
+  };
+  const [before, after] = walks(FORGE);
+  assert.ok(before > 0.95 && after < -0.95, `the Forge was walking to the broken Wall (${before}) and now backs off (${after}), unhurt as it is`);
+  const cog = walks(COG); // leaves the Cog there on a Volatile night
+  assert.deepEqual(botInput(g, AMBER + COG), cog[2], 'a Cog on the same spot is out of reach and carries on as on any night');
+});
+
+test('of two hostiles with the same health a bot shoots the nearer, not the one whose team comes first', () => {
+  const g = quiet(), dart = place(g.heroes[AMBER + DART], MID.x, MID.y), JADE = 2 * S.TEAM_SIZE;
+  const azure = place(g.heroes[AZURE + DART], MID.x + 300, MID.y), jade = place(g.heroes[JADE + DART], MID.x - 200, MID.y);
+  assert.ok(Math.abs(Math.abs(botInput(g, dart.i).aim) - Math.PI) < 0.01, 'Jade\'s Dart, to the west: nearer, though Azure\'s comes first in the list');
+  place(azure, MID.x + 200, MID.y);
+  place(jade, MID.x - 300, MID.y);
+  assert.ok(Math.abs(botInput(g, dart.i).aim) < 0.01, 'and Azure\'s when that is the nearer');
+  jade.hp -= 1;
+  assert.ok(Math.abs(Math.abs(botInput(g, dart.i).aim) - Math.PI) < 0.01, 'health still comes before distance');
 });

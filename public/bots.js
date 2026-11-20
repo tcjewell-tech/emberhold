@@ -1,10 +1,14 @@
 // Bot heroes. botInput() looks at the match and returns the same input object a human
 // client sends, so bots play by exactly the rules players do. It keeps no memory.
-import { HEROES, HERO_IDS, STRUCTS, ENEMIES, TEAMS, CELL, EMBER_R, SCAV_RANGE, SCAV_TIME, CORE_DEF, ECLIPSES, canBuild, buildCost, post, structAt, nearestHostile, enemyDmg } from './sim.js';
+import { HEROES, HERO_IDS, STRUCTS, ENEMIES, TEAMS, CELL, EMBER_R, SCAV_RANGE, SCAV_TIME, CORE_DEF, ECLIPSES, volatileBlast, canBuild, buildCost, post, structAt, nearestHostile, enemyDmg } from './sim.js';
 
 const SIGHT = 520;
 const LEASH = 280; // how far from their Ember bots will chase at night
-const BOMB_HP = 30; // on a Volatile night, an AI enemy with this little health left is about to burst: keep out of its reach
+// A Volatile night. An AI enemy down to BOMB_HP, or to BOMB_SHARE of its own health if that is more (a late Breaker has
+// hundreds), is about to burst: keep out of its reach. SHRUG and STAY are the share of its health and barrier a bot will
+// let the bursts in reach cost it rather than move: at full health, and with a life to save or a Fortify running.
+// BERTH: how much wider a Forge on its way to a repair keeps clear, since it is too slow to step back out in time.
+const BOMB_HP = 30, BOMB_SHARE = 0.16, SHRUG = 0.3, STAY = 0.6, BERTH = 30;
 const AEGIS_WORTH = 0.35; // a Forge spends Aegis when the wave that is landing would cost the squad this share of its health while it lasts
 const gap = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
@@ -15,25 +19,28 @@ const MID = { x: (TEAMS[0].x + TEAMS[1].x + TEAMS[2].x) / 3, y: (TEAMS[0].y + TE
  * facing mid-map first), Spikes in its four corner gates, more Turrets, two more Shield
  * Generators. The gates are at the corners, each with a Turret behind it, so no rival base
  * has a straight shot through one. The four generators' fields cover every guard post.
+ * The cells are the same for all three teams, but every group of pieces goes up nearest mid-map first, whichever way
+ * that is for the team: listed in one fixed order, Azure spiked the gate facing mid-map first and Jade its own seventh.
+ * A square base cannot be turned to face mid-map as the guard posts and wrecks are, so that much is left uneven:
+ * Amber meets the middle with a flat side, Azure and Jade with a corner 15 degrees off the line.
  */
 const BLUEPRINTS = TEAMS.map((T) => {
   const ex = T.x / CELL, ey = T.y / CELL;
-  const at = (type) => ([dx, dy]) => ({ type, cx: ex + dx, cy: ey + dy });
   const fromMid = ([dx, dy]) => Math.hypot(T.x + (dx + 0.5) * CELL - MID.x, T.y + (dy + 0.5) * CELL - MID.y);
+  const group = (type, cells) => [...cells].sort((a, b) => fromMid(a) - fromMid(b)).map(([dx, dy]) => ({ type, cx: ex + dx, cy: ey + dy }));
   const walls = [], gates = [];
   for (let dx = -5; dx <= 4; dx++) for (let dy = -5; dy <= 4; dy++) {
     if (dx !== -5 && dx !== 4 && dy !== -5 && dy !== 4) continue;
     const corner = (dx <= -4 || dx >= 3) && (dy <= -4 || dy >= 3);
     (corner ? gates : walls).push([dx, dy]);
   }
-  walls.sort((a, b) => fromMid(a) - fromMid(b));
   const base = [
-    ...[[2, 2], [-3, -3], [-3, 2], [2, -3]].map(at('turret')),
-    ...[[1, 1], [-2, -2]].map(at('shield')),
-    ...walls.map(at('wall')),
-    ...gates.map(at('spikes')),
-    ...[[3, -1], [-4, 0], [0, 3], [-1, -4]].map(at('turret')),
-    ...[[-2, 1], [1, -2]].map(at('shield')),
+    ...group('turret', [[2, 2], [-3, -3], [-3, 2], [2, -3]]),
+    ...group('shield', [[1, 1], [-2, -2]]),
+    ...group('wall', walls),
+    ...group('spikes', gates),
+    ...group('turret', [[3, -1], [-4, 0], [0, 3], [-1, -4]]),
+    ...group('shield', [[-2, 1], [1, -2]]),
   ];
   // With the base standing, what comes in goes on upgrading it (up: true): the guns first, then the fields, Walls and Spikes.
   const ups = ['turret', 'shield', 'wall', 'spikes'].flatMap((type) => base.filter((p) => p.type === type).map((p) => ({ ...p, up: true })));
@@ -106,12 +113,15 @@ function rivalThing(s, h, range) {
   return best;
 }
 
-/** The hostile unit in range with the least health left: bots finish what they start. */
+/**
+ * The hostile unit in range with the least health left: bots finish what they start. Of two with the same (two rival
+ * Darts, both unhurt) it is the nearer, never the one that comes first in the list of heroes: that favoured the last team.
+ */
 function weakestHostile(s, h, range) {
   let best = null;
   for (const o of [...s.enemies, ...s.heroes]) {
     if (o.i !== undefined && (!o.alive || o.team === h.team)) continue;
-    if (gap(h, o) <= range && (!best || o.hp < best.hp)) best = o;
+    if (gap(h, o) <= range && (!best || o.hp < best.hp || (o.hp === best.hp && gap(h, o) < gap(h, best)))) best = o;
   }
   return best;
 }
@@ -236,10 +246,19 @@ export function botInput(s, i, spend = true, reserve = 0) {
     stopAt = 0;
     to = d < STRUCTS.turret.range + 10 ? { x: 2 * h.x - turret.x, y: 2 * h.y - turret.y } : d > gun.range - 10 ? turret : h;
   }
-  const bomb = s.eclipse === 'volatile' ? s.enemies.find((e) => !e.dead && e.hp <= BOMB_HP && gap(h, e) < ECLIPSES.volatile.r) : null;
-  if (bomb) { // whatever else it was doing, it backs out of the burst first
-    to = { x: 2 * h.x - bomb.x, y: 2 * h.y - bomb.y };
-    stopAt = 0;
+  if (s.eclipse === 'volatile') {
+    // Whatever else it was doing, a bot backs out of the bursts it cannot afford. A hurt bot affords none; one at full
+    // health shrugs off a small one; a medic at a teammate who is nearly gone, and a Fortified Anvil, stay for anything
+    // that leaves them health to spare; a Forge on its way to a repair affords none and keeps a wider berth.
+    const reach = ECLIPSES.volatile.r + (broken ? BERTH : 0);
+    const bombs = s.enemies.filter((e) => !e.dead && e.hp <= Math.max(BOMB_HP, e.max * BOMB_SHARE) && gap(h, e) < reach);
+    const saving = (patient && patient.hp < patient.max * 0.3) || h.fortify > 0;
+    const nerve = broken ? 0 : saving ? STAY : h.hp >= h.max ? SHRUG : 0;
+    if (bombs.length * volatileBlast(s) * (h.fortify > 0 ? def.r.taken : 1) > nerve * (h.hp + h.shield)) {
+      const bomb = bombs.reduce((a, b) => (gap(h, a) <= gap(h, b) ? a : b));
+      to = { x: 2 * h.x - bomb.x, y: 2 * h.y - bomb.y };
+      stopAt = 0;
+    }
   }
   const dx = to.x - h.x, dy = to.y - h.y, d = Math.hypot(dx, dy);
   if (d > stopAt && d > 0) {
