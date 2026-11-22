@@ -5,6 +5,7 @@
 //   node test/balance.test.js 100 4242       any number of matches, from a first seed of your choice (repeats a run exactly)
 //   npm run balance:endless                  endless mode: 12 matches from a random first seed, with its own report
 //   node test/balance.test.js endless 30 7   the same for any match count and first seed
+//   node test/balance.test.js 30 1001 --eclipse=volatile   any of the runs above with every Eclipse night under one Eclipse
 //
 // A hero is flagged when its damage per minute or its deaths per match stray too far from the
 // average of the five heroes. Matches run on worker threads, on half the machine's cores.
@@ -33,20 +34,22 @@ const QUICK = { matches: 12, firstSeed: 1, dmg: 0.3, deaths: [0.33, 2], minutes:
 // (bounds moved to 16 to 23 and 21 to 29); Eclipses, which make every third night harder, brought it back, and the first bounds with it.
 // 2026-11-20, with the Core on every other day and decided by numbers when contested, and Eclipses that grow with the night:
 // 21.7 min and 17.2 nights, the last Ember alone for 0.9 min; last standing Amber 11, Azure 11, Jade 8. The bounds stayed.
+// 2026-11-21, with the shield growing 15% a level and the burst 5%: 22.2 min and 17.5 nights, alone 0.9 min; Amber 8, Azure 9, Jade 13.
 // A match costs about three times a normal one to play, hence only ten under npm test.
 const ENDLESS = { matches: 10, firstSeed: 1, nights: [14, 20], minutes: [18, 26], alone: [0.3, 4], ups: 36, seats: 3 };
 
 const LIMIT = 3600; // seconds of match time after which a match counts as unfinished
 
 /**
- * job: { seed, endless }. alone: minutes the last Ember stood by itself (endless mode; a normal match ends the moment one is left).
+ * job: { seed, endless, eclipse }. alone: minutes the last Ember stood by itself (endless mode; a normal match ends the moment one is left).
  * ups: the most upgraded (tier-2) structures any one team had standing at once, looked at once a second.
  * maxSnapBytes: the largest snapshot (the state as the JSON the server sends), also looked at once a second, so a peak
  * shorter than that can be missed; ashSnapBytes: the same on Ash Storm nights alone, when every AI enemy carries a shield (0: none fell).
  * cores: how many Cores each team took.
  */
-function playMatch({ seed, endless = false }) {
+function playMatch({ seed, endless = false, eclipse }) {
   const g = Object.assign(S.createGame(seed), { endless });
+  if (eclipse) g.onlyEclipse = eclipse; // every Eclipse night of this match falls under this one
   let last = -1, ups = 0, maxSnapBytes = 0, ashSnapBytes = 0; // last: when only one Ember was left
   const cores = S.TEAMS.map(() => 0);
   for (let n = 0; g.phase !== 'over' && g.t < LIMIT; n++) {
@@ -135,9 +138,14 @@ const extras = (sum) => [
   `Largest snapshot: ${kb(sum.snap)} in an average match, ${kb(sum.maxSnapBytes)} in any${sum.ashSnapBytes ? `; ${kb(sum.ashSnapBytes)} on an Ash Storm night` : ''}`,
 ];
 
-function report(sum, seeds) {
+/** What a report's first line ends with when --eclipse was given, and the line that follows it. */
+const forced = (eclipse) => (eclipse ? `, every Eclipse night under ${S.ECLIPSES[eclipse].name} (--eclipse=${eclipse})` : '');
+const caveat = (eclipse) => (eclipse ? ['The bounds checked below are those of the game as it is played, where the Eclipses take turns.'] : []);
+
+function report(sum, seeds, eclipse) {
   return [
-    `Balance: ${sum.n} bot-only matches, seeds ${seeds[0]} to ${seeds.at(-1)}`,
+    `Balance: ${sum.n} bot-only matches, seeds ${seeds[0]} to ${seeds.at(-1)}${forced(eclipse)}`,
+    ...caveat(eclipse),
     `Finished ${sum.n - sum.unfinished} of ${sum.n}; average ${sum.minutes.toFixed(1)} min, ${sum.waves.toFixed(1)} nights`,
     `Wins: ${tally(sum)}, draws ${sum.draws}`,
     `The most upgraded base in a match had ${sum.ups.toFixed(1)} tier-2 structures on average`,
@@ -147,9 +155,10 @@ function report(sum, seeds) {
 }
 
 /** sum: every team's numbers. last: only those of the team that was last standing in each match. */
-function endlessReport(sum, last, seeds) {
+function endlessReport(sum, last, seeds, eclipse) {
   return [
-    `Endless mode: ${sum.n} bot-only matches, seeds ${seeds[0]} to ${seeds.at(-1)}`,
+    `Endless mode: ${sum.n} bot-only matches, seeds ${seeds[0]} to ${seeds.at(-1)}${forced(eclipse)}`,
+    ...caveat(eclipse),
     `Finished ${sum.n - sum.unfinished} of ${sum.n}; average ${sum.minutes.toFixed(1)} min, ${sum.waves.toFixed(1)} nights; the last Ember stood alone for ${sum.alone.toFixed(1)} min on average`,
     `Last standing: ${tally(sum)}, none ${sum.draws}`,
     `The most upgraded base in a match had ${sum.ups.toFixed(1)} tier-2 structures on average`,
@@ -173,19 +182,27 @@ const anySeed = (arg) => Math.floor(+arg) || 1 + Math.floor(Math.random() * 1e6)
 if (!isMainThread) parentPort.on('message', (job) => parentPort.postMessage(playMatch(job)));
 else {
   // No argument: the quick sample of both modes (npm test). A match count: the full run of normal matches. "endless": endless mode alone.
-  const [arg, arg2, arg3] = process.argv.slice(2), mode = arg === undefined ? 'quick' : arg === 'endless' ? 'endless' : 'full';
+  // --eclipse=<id>, anywhere on the line: every Eclipse night of every match falls under that one, so a rule that comes up one night in twelve can be judged.
+  const args = process.argv.slice(2), flags = args.filter((a) => a.startsWith('--')), eclipse = flags.find((a) => a.startsWith('--eclipse='))?.slice(10);
+  const bad = flags.find((a) => !a.startsWith('--eclipse=')) ?? (eclipse !== undefined && !S.ECLIPSE_IDS.includes(eclipse) ? `--eclipse=${eclipse}` : undefined);
+  if (bad) {
+    console.error(`${bad}: the only option is --eclipse=<id>, with one of ${S.ECLIPSE_IDS.join(', ')}`);
+    process.exit(2);
+  }
+  const also = eclipse ? ` --eclipse=${eclipse}` : '';
+  const [arg, arg2, arg3] = args.filter((a) => !a.startsWith('--')), mode = arg === undefined ? 'quick' : arg === 'endless' ? 'endless' : 'full';
   const B = mode === 'full' ? FULL : QUICK, n = mode === 'full' ? Math.max(1, +arg || 60) : mode === 'quick' ? QUICK.matches : 0;
   const seeds = seedsFrom(mode === 'full' ? anySeed(arg2) : QUICK.firstSeed, n);
   const endlessSeeds = mode === 'full' ? [] : seedsFrom(mode === 'quick' ? ENDLESS.firstSeed : anySeed(arg3), mode === 'quick' ? ENDLESS.matches : Math.max(1, +arg2 || 12));
-  const played = await playAll([...seeds.map((seed) => ({ seed })), ...endlessSeeds.map((seed) => ({ seed, endless: true }))]);
+  const played = await playAll([...seeds.map((seed) => ({ seed, eclipse })), ...endlessSeeds.map((seed) => ({ seed, endless: true, eclipse }))]);
   const sum = summarise(played.filter((r) => !r.endless)), longRuns = played.filter((r) => r.endless);
-  if (n) console.log(report(sum, seeds));
-  if (mode === 'full') console.log(`Repeat this exact run with: node test/balance.test.js ${n} ${seeds[0]}\n`);
+  if (n) console.log(report(sum, seeds, eclipse));
+  if (mode === 'full') console.log(`Repeat this exact run with: node test/balance.test.js ${n} ${seeds[0]}${also}\n`);
 
   if (longRuns.length) {
     const all = summarise(longRuns), E = ENDLESS;
-    console.log(endlessReport(all, summarise(longRuns, (r, h) => h.team === r.winner), endlessSeeds));
-    if (mode === 'endless') console.log(`Repeat this exact run with: node test/balance.test.js endless ${all.n} ${endlessSeeds[0]}\n`);
+    console.log(endlessReport(all, summarise(longRuns, (r, h) => h.team === r.winner), endlessSeeds, eclipse));
+    if (mode === 'endless') console.log(`Repeat this exact run with: node test/balance.test.js endless ${all.n} ${endlessSeeds[0]}${also}\n`);
     test(`endless: all ${all.n} matches end, each with a team that was last to fall`, () => assert.equal(all.unfinished + all.draws, 0));
     test(`endless: matches average ${E.nights[0]} to ${E.nights[1]} nights and ${E.minutes[0]} to ${E.minutes[1]} minutes`, () => {
       assert.ok(between(all.waves, E.nights) && between(all.minutes, E.minutes), `average match is ${all.waves.toFixed(1)} nights, ${all.minutes.toFixed(1)} min`);

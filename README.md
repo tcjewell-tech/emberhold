@@ -77,8 +77,8 @@ every second night from night 12.
 |---|---|
 | Blood Moon | AI enemies move 25% faster and notice heroes from 60% further off |
 | Iron Tide | Twice the Breakers, and AI enemies do 25% more damage to structures (not to Embers) |
-| Ash Storm | Turrets and Sentries see three quarters as far, and AI enemies arrive with a shield that goes before their health: 32 points on night 3, 42 on night 6, and more each night |
-| Volatile | An AI enemy bursts when it dies, hurting heroes, structures and other AI enemies within 75 units (not Embers): 25 damage on night 3, 31 on night 6, and more each night. It pays 1 more Scrap |
+| Ash Storm | Turrets and Sentries see three quarters as far, and AI enemies arrive with a shield that goes before their health: 34 points on night 3, 46 on night 6, and more each night |
+| Volatile | An AI enemy bursts when it dies, hurting heroes, structures and other AI enemies within 75 units (not Embers): 24 damage on night 3, 28 on night 6, and a little more each night. It pays 1 more Scrap |
 
 ## The Core
 

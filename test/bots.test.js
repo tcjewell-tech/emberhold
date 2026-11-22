@@ -402,6 +402,58 @@ test('with the Core standing by day, the Dart and the Anvil go and hold it; the 
   assert.ok(heading(botInput(g, dart.i), dart, core) < 0.5, 'and with its Ember under attack, home comes first');
 });
 
+test('a medic steps into a contested Core and stands there when that ties it or wins the lead, and not otherwise', () => {
+  const g = quiet();
+  g.wave = 1;
+  const core = (g.core = { x: S.ARENA.x, y: S.ARENA.y, team: -1, prog: 0 });
+  const patch = g.heroes[AMBER + PATCH], rival = place(g.heroes[AZURE + DART], core.x + 60, core.y);
+  place(g.heroes[AMBER + ANVIL], core.x - 30, core.y); // one each in the ring: a tie, which drains it
+  const from = (dy) => botInput(g, place(patch, core.x, core.y + dy).i);
+  assert.ok(heading(from(-250), patch, core) > 0.95, 'from outside it walks in, where it used to stop at its gun\'s range from the rival');
+  assert.deepEqual([from(-40).mx, from(-40).my], [0, 0], 'and in the ring it stands, where it used to back away from a rival this close');
+
+  const dart = place(g.heroes[AMBER + DART], core.x - 60, core.y + 30);
+  assert.ok(heading(from(-40), patch, rival) < -0.5, 'two teammates there already lead without it: it fights as it does anywhere, and backs off');
+  place(dart, 300, 300);
+  const more = [place(g.heroes[AZURE + ANVIL], core.x + 80, core.y + 40), place(g.heroes[AZURE + PATCH], core.x + 80, core.y - 40)];
+  assert.ok(heading(from(-40), patch, rival) < -0.5, 'one against three: its coming would change nothing, so it does not stand in it');
+  more.forEach((h) => place(h, 300, 400 + h.i * 40));
+
+  const cog = place(g.heroes[AMBER + COG], core.x - 300, core.y - 250);
+  cog.hp = cog.max * 0.5;
+  assert.ok(heading(from(-250), patch, core) > 0.95, 'a teammate who can wait does not keep it out of the ring: it heals from inside');
+  cog.hp = cog.max * 0.2;
+  assert.ok(heading(from(-250), patch, cog) > 0.95, 'one who is nearly gone does');
+  cog.hp = cog.max;
+
+  S.spawnEnemy(g, 'breaker', 0, g.teams[0].ember.x + 200, g.teams[0].ember.y);
+  assert.ok(heading(from(-250), patch, core) < 0.5, 'and with its Ember under attack, home comes first');
+});
+
+test('a raider with no teammate near does not walk into a Core that two or more of one rival team hold', () => {
+  const g = quiet();
+  g.wave = 1;
+  const core = (g.core = { x: S.ARENA.x, y: S.ARENA.y, team: -1, prog: 0 });
+  // Two of Azure at the far edge of the ring, 360 from the Anvil: past the distance at which it would turn to fight them.
+  const pair = [place(g.heroes[AZURE + ANVIL], core.x - 30, core.y + 100), place(g.heroes[AZURE + DART], core.x + 30, core.y + 100)];
+  const anvil = place(g.heroes[AMBER + ANVIL], core.x, core.y - 260), gun = S.HEROES.anvil.gun;
+  const walks = () => heading(botInput(g, anvil.i), anvil, core);
+  assert.ok(gap(anvil, core) < gun.range * 0.85 && gap(anvil, pair[0]) > gun.range * 1.1);
+  assert.equal(walks(), 0, 'it holds at its gun\'s reach from the Core');
+  place(anvil, core.x, core.y - 400);
+  assert.ok(walks() > 0.95, 'which it comes up to from further off');
+  place(anvil, core.x, core.y - 260);
+  const mate = place(g.heroes[AMBER + DART], core.x + 200, core.y - 180); // 269 from the Core: near enough to count
+  assert.ok(walks() > 0.95, 'with a teammate near the Core it goes in');
+  place(mate, 300, 300);
+  place(pair[1], 300, 340);
+  assert.ok(walks() > 0.95, 'and against one rival it goes in alone');
+
+  place(pair[1], core.x + 30, core.y + 100);
+  const dart = place(g.heroes[AMBER + DART], core.x, core.y - 200), poke = botInput(g, dart.i);
+  assert.ok(poke.fire && poke.mx === 0 && poke.my === 0, 'a Dart at its range from the pair stands off and shoots, as it always did');
+});
+
 test('on a Volatile night a bot backs away from an AI enemy that is about to burst, unless it is unhurt and the burst is small', () => {
   const g = quiet(), dart = place(g.heroes[AMBER + DART], MID.x, MID.y);
   g.phase = 'night';

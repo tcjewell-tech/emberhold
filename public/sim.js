@@ -126,13 +126,16 @@ export const ENEMIES = {
  * (so packs go off in chains), and is worth one more Scrap.
  * The shield and the blast are what they would be on a first night, and grow with the night as AI enemies do: shieldGrow
  * and blastGrow of that more for each level after the first (ashShield, volatileBlast). The first Eclipse is on night 3,
- * where they come to 32 and 25.5, a little under the flat 35 and 28 they used to be; by night 6 they are 42 and 30.8.
+ * where they come to 34 and 24.2, a little under the flat 35 and 28 they used to be; by night 9 they are 57 and 30.8.
+ * The two rates differ on purpose. A shield is measured against an AI enemy's health, which grows a quarter a level, so it
+ * grows fast to go on mattering. A burst is measured against a hero's health, which never grows, so it grows slowly:
+ * it takes five at once to down a Dart's 120 on night 6 and four from night 9; at 0.08 a level it took four and, by night 12, three.
  */
 export const ECLIPSES = {
   blood_moon: { name: 'Blood Moon', speed: 1.25, aggro: 1.6, text: 'AI enemies are faster and hunt heroes from further off' },
   iron_tide: { name: 'Iron Tide', breakers: 2, structDmg: 1.25, text: 'Twice the Breakers, and structures take more damage' },
-  ash_storm: { name: 'Ash Storm', turretRange: 0.75, shield: 26, shieldGrow: 0.12, text: 'Turrets see less far, and AI enemies come shielded' },
-  volatile: { name: 'Volatile', blast: 22, blastGrow: 0.08, r: 75, scrap: 1, text: 'AI enemies burst when they die' },
+  ash_storm: { name: 'Ash Storm', turretRange: 0.75, shield: 26, shieldGrow: 0.15, text: 'Turrets see less far, and AI enemies come shielded' },
+  volatile: { name: 'Volatile', blast: 22, blastGrow: 0.05, r: 75, scrap: 1, text: 'AI enemies burst when they die' },
 };
 export const ECLIPSE_IDS = Object.keys(ECLIPSES);
 /** What tonight's Eclipse sets a number to, or `none` when there is no Eclipse or it leaves that number alone. */
@@ -937,7 +940,8 @@ export function startNight(s) {
   s.timer = 0;
   s.core = null; // nobody took it in time
   if (s.wave % 3 === 0 || (s.endless && s.wave >= 12 && s.wave % 2 === 0)) {
-    const ids = ECLIPSE_IDS.filter((id) => id !== s.lastEclipse);
+    // s.onlyEclipse is not in a match unless something puts it there: the balance harness does, to play one Eclipse on every Eclipse night.
+    const ids = s.onlyEclipse ? [s.onlyEclipse] : ECLIPSE_IDS.filter((id) => id !== s.lastEclipse);
     s.eclipse = s.lastEclipse = ids[Math.floor(rand(s) * ids.length)];
   }
   const list = pack(level(s), s.wave % 5 === 0, eclipsed(s, 'breakers')), gap = Math.min(0.45, 16 / list.length);

@@ -1,6 +1,6 @@
 // Bot heroes. botInput() looks at the match and returns the same input object a human
 // client sends, so bots play by exactly the rules players do. It keeps no memory.
-import { HEROES, HERO_IDS, STRUCTS, ENEMIES, TEAMS, CELL, EMBER_R, SCAV_RANGE, SCAV_TIME, CORE_DEF, ECLIPSES, volatileBlast, canBuild, buildCost, post, structAt, nearestHostile, enemyDmg } from './sim.js';
+import { HEROES, HERO_IDS, STRUCTS, ENEMIES, TEAMS, CELL, EMBER_R, SCAV_RANGE, SCAV_TIME, CORE_DEF, ECLIPSES, volatileBlast, coreContestants, canBuild, buildCost, post, structAt, nearestHostile, enemyDmg } from './sim.js';
 
 const SIGHT = 520;
 const LEASH = 280; // how far from their Ember bots will chase at night
@@ -181,7 +181,19 @@ export function botInput(s, i, spend = true, reserve = 0) {
     ? s.structs.filter((st) => st.team === h.team && st.type !== 'spikes' && st.hp < st.max * 0.7 && gap(st, em) < LEASH).sort((a, c) => a.hp / a.max - c.hp / c.max)[0] : null;
   // A Forge out on its own is slow and no match for raiders: with a rival hero in sight and no teammate beside it, it goes home.
   const outmatched = h.kind === 'forge' && !defend && !mates.some((o) => gap(h, o) < 300) && s.heroes.some((o) => o.alive && o.team !== h.team && gap(h, o) < SIGHT);
-  if (patient || broken) {
+  // The Core is decided by numbers (coreContestants), so a roaming bot counts heads: inRing, its teammates standing in
+  // the ring, and rivalTop, the most that any one rival team has there.
+  const ring = s.core && roam ? coreContestants(s) : null;
+  const inRing = ring ? ring.n[h.team] - (gap(h, s.core) <= CORE_DEF.radius ? 1 : 0) : 0;
+  const rivalTop = ring ? Math.max(...ring.n.filter((_, k) => k !== h.team)) : 0;
+  // A medic can tip it: where its teammates in the ring do not lead without it but would tie or lead with it, it goes in
+  // and stands there, healing from inside, unless a teammate elsewhere is nearly gone.
+  const tip = h.kind === 'patch' && inRing > 0 && inRing <= rivalTop && inRing + 1 >= rivalTop && !(patient && patient.hp < patient.max * 0.3);
+  if (tip) {
+    goal = s.core;
+    stopAt = CORE_DEF.radius * 0.5;
+    fixed = true; // it holds its place in the ring: backing off to its gun's range would take it out and give the lead away
+  } else if (patient || broken) {
     goal = patient || broken; // a medic's first job is to get Mend in reach of whoever needs it most; a Forge's, Reforge
     stopAt = def.q.r * 0.6;
     fixed = true;
@@ -202,7 +214,10 @@ export function botInput(s, i, spend = true, reserve = 0) {
       if (piece.ready) out.build = { type: piece.type, cx: piece.cx, cy: piece.cy };
     } else if (core) {
       goal = core;
-      stopAt = CORE_DEF.radius * 0.5;
+      // Two or more of one rival team hold the ring and no teammate is near: a raider stands off at its gun's reach and
+      // shoots, rather than walk in alone to be outnumbered.
+      const lost = ring.lead >= 0 && ring.lead !== h.team && ring.n[ring.lead] >= 2 && !mates.some((o) => gap(o, core) < CORE_DEF.radius * 2.5);
+      stopAt = raider && lost ? gun.range * 0.85 : CORE_DEF.radius * 0.5;
     } else if (rival) {
       goal = rival;
       stopAt = gun.range * 0.85;

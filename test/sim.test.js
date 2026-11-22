@@ -967,6 +967,17 @@ test('every third night falls under an Eclipse, never the same one twice running
   assert.deepEqual(endless.slice(8), [true, false, false, true, false, true, true, true], 'endless mode: nights 9, 12, 14, 15 and 16 of 9 to 16');
 });
 
+test('a match told to play one Eclipse has it on every Eclipse night, and no match is told so unless something sets it', () => {
+  assert.ok(!('onlyEclipse' in S.createGame(1)), 'not a field of a match as it is made, so not in the snapshot');
+  const g = Object.assign(arena(), { onlyEclipse: 'volatile', wave: 2 }), seen = [];
+  for (let night = 3; night <= 8; night++) {
+    S.startNight(g);
+    seen.push(g.eclipse);
+    S.startDay(g);
+  }
+  assert.deepEqual(seen, ['volatile', null, null, 'volatile', null, null], 'nights 3 and 6: the same one twice running, which the game by itself never does');
+});
+
 test('Blood Moon: AI enemies move a quarter faster and pick up heroes from 60% further off', () => {
   const walked = (eclipse) => {
     const g = Object.assign(arena(), { eclipse });
@@ -1041,10 +1052,10 @@ test('Ash Storm: Turrets see three quarters as far, and AI enemies come with a s
 
 test('an Ash Storm\'s shield and a Volatile burst grow with the night, at half pace in endless mode', () => {
   const A = S.ECLIPSES.ash_storm, V = S.ECLIPSES.volatile, on = (wave, more) => Object.assign(arena(), { wave, ...more });
-  assert.deepEqual([1, 3, 6, 9].map((wave) => S.ashShield(on(wave))), [26, 32, 42, 51], 'under the old flat 35 on night 3, the first with an Eclipse, and over it from night 6');
+  assert.deepEqual([1, 3, 6, 9].map((wave) => S.ashShield(on(wave))), [26, 34, 46, 57], 'under the old flat 35 on night 3, the first with an Eclipse, and over it from night 6');
   assert.equal(S.ashShield(on(9, { endless: true })), Math.round(A.shield * (1 + A.shieldGrow * 4)), 'night 9 of an endless match is as hard as night 5');
-  assert.equal(S.spawnEnemy(on(6, { eclipse: 'ash_storm' }), 'skitter', 0, MID.x, MID.y).shield, 42, 'which is what an AI enemy arrives with');
-  for (const [wave, blast] of [[1, 22], [3, 25.52], [6, 30.8], [9, 36.08]]) assert.ok(Math.abs(S.volatileBlast(on(wave)) - blast) < 1e-9, `night ${wave}: ${S.volatileBlast(on(wave))}`);
+  assert.equal(S.spawnEnemy(on(6, { eclipse: 'ash_storm' }), 'skitter', 0, MID.x, MID.y).shield, 46, 'which is what an AI enemy arrives with');
+  for (const [wave, blast] of [[1, 22], [3, 24.2], [6, 27.5], [9, 30.8]]) assert.ok(Math.abs(S.volatileBlast(on(wave)) - blast) < 1e-9, `night ${wave}: ${S.volatileBlast(on(wave))}`);
   assert.ok(Math.abs(S.volatileBlast(on(9, { endless: true })) - V.blast * (1 + V.blastGrow * 4)) < 1e-9);
 
   const g = on(6, { eclipse: 'volatile' });
@@ -1053,7 +1064,7 @@ test('an Ash Storm\'s shield and a Volatile burst grow with the night, at half p
   Object.assign(e, { stun: 100, hp: 10 });
   const dart = place(g.heroes[AZURE + DART], spikes.x, spikes.y + V.r - 5), out = place(g.heroes[JADE + DART], spikes.x, spikes.y - V.r - 5);
   run(g, 0.5);
-  assert.ok(e.dead && Math.abs(dart.max - dart.hp - 30.8) < 1e-9, `the burst on night 6 does ${dart.max - dart.hp}`);
+  assert.ok(e.dead && Math.abs(dart.max - dart.hp - 27.5) < 1e-9, `the burst on night 6 does ${dart.max - dart.hp}`);
   assert.equal(out.hp, out.max, 'and reaches no further than it did');
 });
 
