@@ -218,6 +218,10 @@ export function botInput(s, i, spend = true, reserve = 0) {
       // shoots, rather than walk in alone to be outnumbered.
       const lost = ring.lead >= 0 && ring.lead !== h.team && ring.n[ring.lead] >= 2 && !mates.some((o) => gap(o, core) < CORE_DEF.radius * 2.5);
       stopAt = raider && lost ? gun.range * 0.85 : CORE_DEF.radius * 0.5;
+      // The Anvil is the hero built to stand its ground: it walks into the ring and holds it against whoever comes, where the
+      // others back off to their guns' range, and so out of it. It gives the ring up as any raider does: outnumbered with no
+      // teammate near (lost), its shield broken, or hurt enough to turn for home.
+      if (h.kind === 'anvil' && !lost) fixed = true;
     } else if (rival) {
       goal = rival;
       stopAt = gun.range * 0.85;

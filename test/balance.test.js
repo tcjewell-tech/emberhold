@@ -35,6 +35,7 @@ const QUICK = { matches: 12, firstSeed: 1, dmg: 0.3, deaths: [0.33, 2], minutes:
 // 2026-11-20, with the Core on every other day and decided by numbers when contested, and Eclipses that grow with the night:
 // 21.7 min and 17.2 nights, the last Ember alone for 0.9 min; last standing Amber 11, Azure 11, Jade 8. The bounds stayed.
 // 2026-11-21, with the shield growing 15% a level and the burst 5%: 22.2 min and 17.5 nights, alone 0.9 min; Amber 8, Azure 9, Jade 13.
+// 2026-11-22, with the bot Anvil holding the ring of the Core: 21.4 min and 17.1 nights, alone 0.7 min; Amber 12, Azure 8, Jade 10.
 // A match costs about three times a normal one to play, hence only ten under npm test.
 const ENDLESS = { matches: 10, firstSeed: 1, nights: [14, 20], minutes: [18, 26], alone: [0.3, 4], ups: 36, seats: 3 };
 

@@ -394,7 +394,7 @@ test('with the Core standing by day, the Dart and the Anvil go and hold it; the 
   const rival = place(g.heroes[AZURE + DART], core.x + 200, core.y);
   const holds = botInput(g, anvil.i), kites = botInput(g, dart.i);
   assert.ok(holds.fire && Math.abs(holds.aim) < 0.01 && kites.fire, 'both shoot the rival that comes for it');
-  assert.ok(kites.mx < -0.9 && holds.mx === 0, 'each fighting as it does anywhere: the Dart backs off to its range, the Anvil is at its own already');
+  assert.ok(kites.mx < -0.9 && holds.mx === 0, 'the Dart fights as it does anywhere and backs off to its range; the Anvil holds the ring');
   place(rival, 300, 300);
 
   S.spawnEnemy(g, 'breaker', 0, g.teams[0].ember.x + 200, g.teams[0].ember.y);
@@ -428,6 +428,30 @@ test('a medic steps into a contested Core and stands there when that ties it or 
 
   S.spawnEnemy(g, 'breaker', 0, g.teams[0].ember.x + 200, g.teams[0].ember.y);
   assert.ok(heading(from(-250), patch, core) < 0.5, 'and with its Ember under attack, home comes first');
+});
+
+test('the Anvil holds the ring of the Core against a rival within reach, and gives it up when outnumbered alone or hurt', () => {
+  const g = quiet();
+  g.wave = 1;
+  const core = (g.core = { x: S.ARENA.x, y: S.ARENA.y, team: -1, prog: 0 });
+  const anvil = place(g.heroes[AMBER + ANVIL], core.x - 20, core.y), rival = place(g.heroes[AZURE + ANVIL], core.x + 40, core.y);
+  const input = () => botInput(g, anvil.i);
+  assert.deepEqual([input().mx, input().my, input().fire], [0, 0, true], 'in the ring it stands and shoots, where it used to back away from a rival this close');
+  place(anvil, core.x - 200, core.y);
+  assert.ok(heading(input(), anvil, core) > 0.95, 'and from outside it walks in, where it used to stop at the range of its gun from the rival');
+  place(anvil, core.x - 20, core.y);
+
+  const second = place(g.heroes[AZURE + DART], core.x + 60, core.y + 40);
+  assert.ok(heading(input(), anvil, rival) < -0.5, 'two of one rival team in the ring and no teammate near: it backs out');
+  const mate = place(g.heroes[AMBER + DART], core.x - 150, core.y);
+  assert.deepEqual([input().mx, input().my], [0, 0], 'with a teammate near it holds, one against two in the ring');
+  place(mate, 300, 300);
+  place(second, 300, 340);
+
+  Object.assign(anvil, { shield: 0, hp: anvil.max * 0.7 });
+  assert.ok(heading(input(), anvil, S.post(0, ANVIL)) > 0.9, 'its shield broken and a quarter of its health gone, it turns for home');
+  Object.assign(anvil, { shield: anvil.shieldMax, hp: anvil.max * 0.45 });
+  assert.ok(heading(input(), anvil, S.post(0, ANVIL)) > 0.9, 'as it does under half health');
 });
 
 test('a raider with no teammate near does not walk into a Core that two or more of one rival team hold', () => {
