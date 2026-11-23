@@ -2,8 +2,13 @@
 // Everything runs through a low-pass filter and a short echo so it sits soft rather than shrill.
 
 export function createSound() {
-  let ac, out, scale = 1, muted = false;
-  try { muted = localStorage.getItem('emberhold-muted') === '1'; } catch { /* private window: start unmuted */ }
+  let ac, out, scale = 1, muted = false, master = 1;
+  const level = (v) => typeof v === 'number' && v >= 0 && v <= 1;
+  try {
+    muted = localStorage.getItem('emberhold-muted') === '1';
+    const kept = Number(localStorage.getItem('emberhold-volume') ?? 1);
+    if (level(kept)) master = kept;
+  } catch { /* private window: start unmuted, at full volume */ }
 
   function setup() {
     ac = new AudioContext();
@@ -55,11 +60,19 @@ export function createSound() {
     names: Object.keys(SFX),
     /** vol: 0 to 1, how loud this one is (distance from the camera, say). */
     play(name, vol = 1) {
-      if (muted || vol <= 0.03 || !SFX[name]) return;
+      if (muted || vol * master <= 0.03 || !SFX[name]) return;
       if (!ac) setup();
       if (ac.state === 'suspended') ac.resume(); // browsers hold audio until the first click or key
-      scale = vol;
+      scale = vol * master;
       SFX[name]();
+    },
+    /** The master volume, 0 to 1. Given a number in that range it is set, and remembered, first. */
+    volume(v) {
+      if (level(v)) {
+        master = v;
+        try { localStorage.setItem('emberhold-volume', String(v)); } catch { /* not remembered */ }
+      }
+      return master;
     },
     muted: () => muted,
     /** Flip sound on or off; returns true when now muted. */

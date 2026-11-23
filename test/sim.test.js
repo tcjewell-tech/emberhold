@@ -650,6 +650,23 @@ test('a snapshot is JSON for the client, with a count in place of the spawn queu
   assert.equal(snap.spawn, undefined);
   assert.equal(snap.pending, g.spawn.length);
   assert.ok(snap.pending > 0);
+  assert.ok(!S.snapshot(Object.assign(g, { onlyEclipse: 'volatile' })).includes('onlyEclipse'), 'what the balance harness sets on a match is not sent either');
+});
+
+test('a ping stands on the caller\'s team for eight seconds; a hero that is down can make one; nothing else is taken for one', () => {
+  const g = arena(), dart = g.heroes[AMBER + DART];
+  assert.ok(g.teams.every((T) => !('ping' in T)), 'a new match has none, so none is in the snapshot');
+  run(g, DT, { [dart.i]: { ping: 'core' } });
+  assert.deepEqual([g.teams[0].ping.kind, Math.round(g.teams[0].ping.ttl)], ['core', S.PING_TTL]);
+  assert.ok(!('ping' in g.teams[1]) && !('ping' in g.teams[2]), 'only its own team');
+  run(g, 5);
+  Object.assign(dart, { alive: false, hp: 0, respawn: 100 });
+  run(g, DT, { [dart.i]: { ping: 'raid' } });
+  assert.deepEqual([g.teams[0].ping.kind, Math.round(g.teams[0].ping.ttl)], ['raid', S.PING_TTL], 'a new call takes the old one\'s place, with its own eight seconds');
+  run(g, S.PING_TTL);
+  assert.ok(!('ping' in g.teams[0]), 'and then it is gone from the state, not left there empty');
+  for (const junk of ['attack', 7, true, null, {}, ['core']]) run(g, DT, { [dart.i]: { ping: junk } });
+  assert.ok(!('ping' in g.teams[0]), 'only the three known calls count');
 });
 
 // ---------------------------------------------------------------- Anvil's shield
@@ -796,6 +813,29 @@ test('canCast, heroSpeed and heroFireMult say what step itself will do (the clie
   Object.assign(dart, { rush: 1, overdrive: 1 });
   assert.equal(S.heroSpeed(dart), S.HEROES.dart.speed * S.POWERUPS.rush.speed);
   assert.equal(S.heroFireMult(dart), S.HEROES.dart.r.mult);
+});
+
+test('Triage: a Patch walks a fifth faster towards an injured teammate, and no faster otherwise', () => {
+  const g = arena(), T = S.HEROES.patch.triage, base = S.HEROES.patch.speed;
+  const patch = place(g.heroes[AMBER + PATCH], MID.x, MID.y), mate = place(g.heroes[AMBER + COG], MID.x + 200, MID.y);
+  assert.equal(S.heroSpeed(patch, g, 1, 0), base, 'nobody is hurt');
+  mate.hp = mate.max * T.below - 1;
+  assert.equal(S.heroSpeed(patch, g, 1, 0), base * T.speed, 'straight at a teammate under half health');
+  assert.equal(S.heroSpeed(patch, g, -1, 0), base, 'walking straight away from them');
+  assert.equal(S.heroSpeed(patch, g, 0, 1), base, 'or across: circling is not going to them');
+  assert.equal(S.heroSpeed(patch, g, 0.5, 0.3), base * T.speed, 'a little off the line still is, and at any pace');
+  assert.equal(S.heroSpeed({ ...patch, x: mate.x + 200 }, g, -1, 0), base * T.speed, 'asked of a copy standing elsewhere, as the client asks: it is the way from there that counts');
+  Object.assign(mate, { alive: false, hp: 0 });
+  assert.equal(S.heroSpeed(patch, g, 1, 0), base, 'a teammate who is down is not a patient');
+  Object.assign(mate, { alive: true, hp: mate.max * T.below - 1 });
+  assert.equal(S.heroSpeed(patch, g, 0, 0), base, 'standing still');
+  assert.equal(S.heroSpeed(patch), base, 'asked without the match and the move, it is the plain speed as before');
+  assert.equal(S.heroSpeed(g.heroes[AMBER + DART], g, 1, 0), S.HEROES.dart.speed, 'only the Patch has it');
+  const rival = place(g.heroes[AZURE + COG], MID.x - 200, MID.y);
+  rival.hp = 1;
+  assert.equal(S.heroSpeed(patch, g, -1, 0), base, 'a hurt rival is nobody\'s patient');
+  run(g, 0.5, { [patch.i]: { mx: 1, my: 0 } });
+  assert.ok(Math.abs(patch.x - (MID.x + base * T.speed * 0.5)) < 0.01, 'and step moves it by that speed');
 });
 
 test('Aegis halves the damage the whole team takes, for as long as it lasts', () => {
@@ -1080,7 +1120,7 @@ test('a Volatile chain of any length goes off in one tick without a deeper stack
   // 8000 AI enemies in one spot, each a burst from death: as calls within calls that is 16000 frames, more than the stack holds.
   const g = Object.assign(arena(), { eclipse: 'volatile' }), N = 8000;
   strandAmber(g);
-  const pack = Array.from({ length: N }, () => Object.assign(S.spawnEnemy(g, 'skitter', 0, MID.x, MID.y), { hp: 15 }));
+  const pack = Array.from({ length: N }, () => Object.assign(S.spawnEnemy(g, 'skitter', 0, MID.x, MID.y), { hp: 9 })); // under the 9.9 a burst does to an AI enemy
   const frail = S.addStruct(g, 'wall', 1, MID.cx + 1, MID.cy), wall = S.addStruct(g, 'wall', 1, MID.cx - 1, MID.cy), turret = S.addStruct(g, 'turret', 1, MID.cx, MID.cy + 1);
   frail.hp = 10; // falls to the first burst, while the loop over the structures is on it
   Object.assign(wall, { hp: 1e7, max: 1e7 });
@@ -1089,27 +1129,28 @@ test('a Volatile chain of any length goes off in one tick without a deeper stack
   pack[0].dead = true;
   S.ECLIPSE_HOOKS.volatile.death(g, pack[0], 0);
   assert.ok(pack.every((e) => e.dead), 'the first burst set off all the rest');
-  assert.equal(g.teams[0].scrap - scrap, (N - 1) * (S.ENEMIES.skitter.bounty + S.ECLIPSES.volatile.scrap), 'each paid to the team that started it');
+  assert.equal(g.teams[0].scrap - scrap, (N - 1) * S.ENEMIES.skitter.bounty, 'each paid to the team that started it, at its plain bounty');
   assert.equal(g.fx.filter((f) => f.kind === 'blast').length, N, 'one burst each');
   assert.ok(frail.dead && !g.structs.includes(frail) && g.sv === sv + 1, 'the frail Wall is gone, and the structures are known to have changed');
   const took = [wall, turret].map((st) => Math.round((st.max - st.hp) / S.volatileBlast(g)));
   assert.deepEqual(took, [N, N], 'and the Wall and the Turret beside it were hit by every burst, none skipped');
 
   // A second chain in the same match starts clean: nothing was left waiting from the first.
-  const [a, b] = [0, 1].map(() => Object.assign(S.spawnEnemy(g, 'skitter', 0, MID.x + 400, MID.y), { hp: 15 }));
+  const [a, b] = [0, 1].map(() => Object.assign(S.spawnEnemy(g, 'skitter', 0, MID.x + 400, MID.y), { hp: 9 }));
   a.dead = true;
   S.ECLIPSE_HOOKS.volatile.death(g, a, 0);
   assert.ok(b.dead);
 });
 
-test('Volatile: a dying AI enemy bursts, hurting heroes, structures and other AI enemies near it (in chains) but no Ember, and pays one more Scrap', () => {
+test('Volatile: a dying AI enemy bursts, hurting heroes and structures near it in full and other AI enemies at 45% (in chains) but no Ember; a kill pays one more Scrap, a death in the chain does not', () => {
   const g = Object.assign(arena(), { eclipse: 'volatile' }), em = g.teams[0].ember, V = S.ECLIPSES.volatile;
   strandAmber(g);
   const spikes = S.addStruct(g, 'spikes', 0, em.x / S.CELL + 1, em.y / S.CELL); // 63 from the Ember's middle: inside every burst below
   const a = S.spawnEnemy(g, 'skitter', 0, spikes.x, spikes.y);
   const b = S.spawnEnemy(g, 'skitter', 0, spikes.x, spikes.y - 50);
-  a.stun = b.stun = 100;
-  b.hp = 15; // the first burst is enough to set it off
+  const c = S.spawnEnemy(g, 'skitter', 0, spikes.x, spikes.y + 30); // off the Spikes; 30 from a, 80 from b: in reach of the first burst only
+  a.stun = b.stun = c.stun = 100;
+  b.hp = 9; // the first burst is enough to set it off
   const wall = S.addStruct(g, 'wall', 2, spikes.cx + 1, spikes.cy); // 40 from a, 64 from b
   const dart = place(g.heroes[AZURE + DART], spikes.x, spikes.y + 50); // 50 from a, 100 from b
   const far = place(g.heroes[JADE + DART], spikes.x, spikes.y + 200);
@@ -1120,7 +1161,8 @@ test('Volatile: a dying AI enemy bursts, hurting heroes, structures and other AI
   assert.equal(far.hp, far.max);
   assert.equal(wall.max - wall.hp, 2 * V.blast, 'both reached the Wall');
   assert.equal(em.hp, em.max, 'neither hurt the Ember');
-  assert.equal(g.teams[0].scrap - scrap, 2 * (S.ENEMIES.skitter.bounty + V.scrap), 'the team whose Spikes killed the first is paid for both, one extra each');
+  assert.ok(!c.dead && Math.abs(c.max - c.hp - V.blast * V.toEnemies) < 1e-9, `an AI enemy takes ${V.toEnemies} of a burst, so a healthy one outlives it: ${c.max - c.hp}`);
+  assert.equal(g.teams[0].scrap - scrap, 2 * S.ENEMIES.skitter.bounty + V.scrap, 'the team whose Spikes killed the first is paid for both, with the extra for the one it killed and not for the one the burst did');
 
   const calm = arena();
   const sp = S.addStruct(calm, 'spikes', 0, MID.cx, MID.cy);
@@ -1208,7 +1250,32 @@ test('one team alone at the Core takes it in six seconds, and is paid: Scrap, Em
   assert.equal(full.teams[2].ember.hp, full.teams[2].ember.max, 'the Ember is never mended past full');
 });
 
-test('a contested Core goes, slower, to the team with the most heroes at it; a tie drains it; a rival\'s progress is run down before a new team\'s counts', () => {
+test('at dusk a Core half taken or more pays the team that leads it with its own progress half, and any other Core nothing', () => {
+  const D = S.CORE_DEF;
+  /** Amber's Ember and Scrap after a dusk that finds Amber's progress at `prog` and the ring as `setup` left it. */
+  const dusk = (prog, setup) => {
+    const g = arena(), T = g.teams[0];
+    Object.assign(coreIn(g), { team: 0, prog });
+    setup(g);
+    T.ember.hp = 1000;
+    const scrap = T.scrap, rival = g.teams[1].scrap;
+    S.startNight(g);
+    assert.equal(g.core, null, 'the Core goes at dusk whatever it paid');
+    assert.equal(g.teams[1].scrap, rival, 'a rival is never paid for progress that is not its own');
+    return { g, paid: [T.scrap - scrap, T.ember.hp - 1000], taken: g.fx.some((f) => f.kind === 'capture') };
+  };
+  const amber = (g) => atCore(g.heroes[AMBER + DART], -40), azure = (g) => atCore(g.heroes[AZURE + DART], 40);
+  const half = dusk(D.captureTime * D.dusk, amber);
+  assert.deepEqual([half.paid, half.taken], [[Math.round(D.scrapReward * D.dusk), Math.round(D.emberHeal * D.dusk)], true], 'half the Scrap and half the mending, and the capture is shown');
+  assert.deepEqual([half.g.heroes[AMBER + ANVIL].ult, half.g.heroes[AMBER + ANVIL].rush], [D.ultGrant * D.dusk, 0], 'half the Ultimate charge, and no Rush');
+  const none = [[0, 0], false];
+  assert.deepEqual(Object.values(dusk(D.captureTime * D.dusk - 0.1, amber)).slice(1), none, 'under half way: nothing');
+  assert.deepEqual(Object.values(dusk(5, (g) => (amber(g), azure(g)))).slice(1), none, 'tied at dusk: nothing');
+  assert.deepEqual(Object.values(dusk(5, azure)).slice(1), none, 'a rival alone in the ring, still running Amber\'s progress down: nothing, to either');
+  assert.deepEqual(Object.values(dusk(5, () => {})).slice(1), none, 'nobody there: nothing');
+});
+
+test('a contested Core goes, slower, to the team with the most heroes at it; a tie holds it where it is; a rival\'s progress is run down before a new team\'s counts', () => {
   const g = arena(), D = S.CORE_DEF, cents = (v) => Math.round(v * 100) / 100;
   coreIn(g);
   const amber = atCore(g.heroes[AMBER + DART], -40), azure = g.heroes[AZURE + DART], home = { x: azure.x, y: azure.y };
@@ -1217,14 +1284,14 @@ test('a contested Core goes, slower, to the team with the most heroes at it; a t
   assert.deepEqual([g.core.team, prog()], [0, 2]);
   atCore(azure, 40);
   run(g, 3);
-  assert.deepEqual([g.core.team, prog()], [0, cents(2 - 3 * D.tieDecay)], 'one against one: it drains slowly, and nobody gains');
+  assert.deepEqual([g.core.team, prog()], [0, 2], 'one against one: it stays where it is, and nobody gains or loses');
   const second = atCore(g.heroes[AMBER + ANVIL], -80);
   run(g, 2);
-  assert.deepEqual([g.core.team, prog()], [0, cents(2 - 3 * D.tieDecay + 2 * D.contestedRate)], 'two against one: Amber fills it again, at the contested pace');
+  assert.deepEqual([g.core.team, prog()], [0, cents(2 + 2 * D.contestedRate)], 'two against one: Amber fills it again, at the contested pace');
   atCore(g.heroes[AZURE + ANVIL], 80);
   atCore(g.heroes[AZURE + PATCH], 110);
   run(g, 1);
-  const left = cents(2 - 3 * D.tieDecay + 2 * D.contestedRate - D.contestedRundown);
+  const left = cents(2 + 2 * D.contestedRate - D.contestedRundown);
   assert.deepEqual([g.core.team, prog()], [0, left], 'three against two: Azure has it now, and runs Amber\'s progress down first');
   place(amber, 300, 300);
   place(second, 300, 340);

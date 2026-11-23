@@ -29,6 +29,39 @@ test('the art module keeps its scale, and has a mood for every match', async () 
   for (const m of MOODS) for (const k of ['g', 'hi', 'lo', 'det', 'water', 'panel', 'panel2', 'edge']) assert.match(m[k], /^#[0-9a-f]{6}$/, `${m.name}.${k} is a colour`);
 });
 
+test('high contrast swaps in the colourblind-safe team colours and marks what is a team\'s with its own shape; off puts both back', async (t) => {
+  const { ctx, made } = fakeCanvas();
+  globalThis.document = { createElement: () => fakeCanvas().canvas };
+  t.after(() => delete globalThis.document);
+  const { createArt, setPalette, PIPS } = await import('../public/art.js');
+  t.after(() => setPalette(false));
+  const art = createArt(ctx), plain = TEAMS.map((T) => T.color), g = createGame(1);
+  const fills = (paint) => {
+    const before = made.fills;
+    paint();
+    return made.fills - before;
+  };
+  assert.equal(new Set(PIPS).size, TEAMS.length, 'a different shape for each team');
+  // What each thing that belongs to a team is drawn with: a structure of every kind, a hero, an Ember.
+  const owned = [
+    ...Object.keys(STRUCTS).map((type, k) => [type, ((st) => () => art[type](st, 10, 10))(addStruct(g, type, 2, 40 + k, 30))]),
+    ['a hero', () => art.hero(g.heroes[7], 50, 50, 1, { walking: false, mine: false, t: 250, aegis: false })],
+    ['an Ember', () => art.ember(1, 60, 60, 0.5, true, 300)],
+  ];
+  const bare = owned.map(([, paint]) => fills(paint));
+  assert.equal(fills(() => art.pip(0, 10, 10)), 0, 'no shapes while it is off');
+
+  setPalette(true);
+  assert.deepEqual(TEAMS.map((T) => T.color), ['#ffb347', '#56b4e9', '#e66199']);
+  const shapes = TEAMS.map((_, k) => fills(() => art.pip(k, 10, 10)));
+  assert.ok(shapes.every((n) => n > 1), `every team has a shape: ${shapes}`);
+  owned.forEach(([what, paint], k) => assert.ok(fills(paint) > bare[k], `${what} carries its team's shape`));
+
+  setPalette(false);
+  assert.deepEqual(TEAMS.map((T) => T.color), plain, 'the colours as they were');
+  owned.forEach(([what, paint], k) => assert.equal(fills(paint), bare[k], `${what} is drawn as before`));
+});
+
 test('everything the game can hold has a painter, and each one draws without throwing', async (t) => {
   const { canvas, ctx, made } = fakeCanvas();
   globalThis.document = { createElement: () => fakeCanvas().canvas };

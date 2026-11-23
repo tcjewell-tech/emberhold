@@ -75,7 +75,8 @@ export const HEROES = {
     r: { name: 'Overdrive', time: 6, mult: 2, text: '6 s: double fire rate' },
   },
   patch: {
-    name: 'Patch', role: 'Medic', hp: 140, speed: 185, passive: 'None',
+    name: 'Patch', role: 'Medic', hp: 140, speed: 185, passive: 'Triage: +20% speed when moving toward an injured teammate',
+    triage: { speed: 1.2, below: 0.5, cone: 0.7 }, // injured: under this share of their health; towards: the cosine of how far off the line to them still counts
     gun: { name: 'Needler', dmg: 13, pellets: 1, spread: 0.02, rate: 4, range: 460, speed: 850 },
     q: { name: 'Mend', cd: 7, r: 150, heal: 70, text: 'Heal teammates around you' },
     r: { name: 'Second Wind', text: 'Revive downed teammates and fully heal the team' },
@@ -122,8 +123,9 @@ export const ENEMIES = {
  * blood_moon: AI enemies move faster and pick up heroes from further off.
  * iron_tide: twice the Breakers, and AI enemies hit structures (not Embers) harder.
  * ash_storm: Turrets and Sentries see less far, and AI enemies arrive with a shield that soaks damage before their health.
- * volatile: an AI enemy bursts as it dies, hurting the heroes, structures (not Embers) and other AI enemies around it
- * (so packs go off in chains), and is worth one more Scrap.
+ * volatile: an AI enemy bursts as it dies, hurting the heroes and structures (not Embers) around it in full and other AI
+ * enemies at `toEnemies` of that (so packs go off in chains, but a wave does not clear itself), and is worth one more Scrap
+ * to whoever killed it; one that dies to a burst pays its plain bounty.
  * The shield and the blast are what they would be on a first night, and grow with the night as AI enemies do: shieldGrow
  * and blastGrow of that more for each level after the first (ashShield, volatileBlast). The first Eclipse is on night 3,
  * where they come to 34 and 24.2, a little under the flat 35 and 28 they used to be; by night 9 they are 57 and 30.8.
@@ -135,7 +137,7 @@ export const ECLIPSES = {
   blood_moon: { name: 'Blood Moon', speed: 1.25, aggro: 1.6, text: 'AI enemies are faster and hunt heroes from further off' },
   iron_tide: { name: 'Iron Tide', breakers: 2, structDmg: 1.25, text: 'Twice the Breakers, and structures take more damage' },
   ash_storm: { name: 'Ash Storm', turretRange: 0.75, shield: 26, shieldGrow: 0.15, text: 'Turrets see less far, and AI enemies come shielded' },
-  volatile: { name: 'Volatile', blast: 22, blastGrow: 0.05, r: 75, scrap: 1, text: 'AI enemies burst when they die' },
+  volatile: { name: 'Volatile', blast: 22, blastGrow: 0.05, toEnemies: 0.45, r: 75, scrap: 1, text: 'AI enemies burst when they die' },
 };
 export const ECLIPSE_IDS = Object.keys(ECLIPSES);
 /** What tonight's Eclipse sets a number to, or `none` when there is no Eclipse or it leaves that number alone. */
@@ -160,10 +162,16 @@ const hook = (s, when, ...args) => ECLIPSE_HOOKS[s.eclipse]?.[when]?.(s, ...args
  * goes at dusk or when taken; the days between are left for raiding. A team with a living hero within radius, and no rival
  * there, fills it over captureTime seconds, after first running down whatever a rival had put in, a second a second.
  * With rivals there too, the team with the most heroes in the ring still has it, but slower: it runs a rival's progress
- * down at contestedRundown and fills at contestedRate. A tie for the most drains it at tieDecay, and an empty ring at decayRate.
+ * down at contestedRundown and fills at contestedRate. A tie for the most holds it where it is, and an empty ring drains it at decayRate.
  * Taking it pays the team Scrap, mends its Ember, and gives each of its living heroes Ultimate charge and `rush` seconds of Rush.
+ * At dusk, a team that leads the ring with its own progress at least `dusk` of the way there is paid `dusk` of that (and no Rush).
+ * The ring is wide enough for a hero with a gun to move about inside it.
  */
-export const CORE_DEF = { spawnDelay: 12, radius: 110, captureTime: 6, decayRate: 0.5, contestedRate: 0.45, contestedRundown: 0.75, tieDecay: 0.2, scrapReward: 45, emberHeal: 120, ultGrant: 35, rush: 6 };
+export const CORE_DEF = { spawnDelay: 12, radius: 135, captureTime: 6, decayRate: 0.5, contestedRate: 0.45, contestedRundown: 0.75, dusk: 0.5, scrapReward: 45, emberHeal: 120, ultGrant: 35, rush: 6 };
+
+/** What a player can ask of the bots on their team (an input's one-shot `ping`), and how many seconds the call stands. */
+export const PINGS = ['defend', 'core', 'raid'];
+export const PING_TTL = 8;
 
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
 const IDLE = {};
@@ -220,7 +228,7 @@ export function createGame(seed = 1) {
 /** What the server sends each client: the state minus the spawn queue, numbers rounded. */
 export function snapshot(s) {
   // shortcut: whole state as JSON every time, which leans on the socket's stream compression (see server.js); send deltas if that stops being enough
-  return JSON.stringify({ ...s, spawn: undefined, pending: s.spawn.length }, (k, v) => (typeof v === 'number' ? Math.round(v * 100) / 100 : v));
+  return JSON.stringify({ ...s, spawn: undefined, onlyEclipse: undefined, pending: s.spawn.length }, (k, v) => (typeof v === 'number' ? Math.round(v * 100) / 100 : v));
 }
 
 // ---------------------------------------------------------------- grid, structures, pathing
@@ -378,7 +386,7 @@ function hurtEnemy(s, e, dmg, team, owner) {
   e.hp -= dmg - soaked;
   if (e.hp > 0) return;
   e.dead = true;
-  if (team >= 0) s.teams[team].scrap += ENEMIES[e.type].bounty + eclipsed(s, 'scrap', 0);
+  if (team >= 0) s.teams[team].scrap += ENEMIES[e.type].bounty + (chain.length ? 0 : eclipsed(s, 'scrap', 0)); // a death inside a burst's chain pays no extra
   if (owner >= 0) s.heroes[owner].stats.kills++;
   addFx(s, 'pop', e.x, e.y, ENEMIES[e.type].r * 2, -1);
   hook(s, 'death', e, team);
@@ -404,7 +412,7 @@ function burst(s, e, team) {
       addFx(s, 'blast', x, y, V.r, -1);
       for (const h of s.heroes) if (near(h)) hurtHero(s, h, dmg, -1, -1);
       for (let k = s.structs.length - 1; k >= 0; k--) if (near(s.structs[k])) hurtStruct(s, s.structs[k], dmg, -1); // backwards: one that falls is cut out behind us
-      for (const o of s.enemies) if (near(o)) hurtEnemy(s, o, dmg, team, -1); // the dead are passed over; one that dies here joins the chain
+      for (const o of s.enemies) if (near(o)) hurtEnemy(s, o, dmg * V.toEnemies, team, -1); // the dead are passed over; one that dies here joins the chain
     }
   } finally {
     chain.length = 0;
@@ -555,8 +563,24 @@ export function dash(s, h, mx, my) {
 // The client reads the next three too, to predict its own hero by the same rules.
 /** How many times its gun's usual rate a hero fires at. */
 export const heroFireMult = (h) => (h.overdrive > 0 ? HEROES.dart.r.mult : 1);
-/** World units a second. */
-export const heroSpeed = (h) => HEROES[h.kind].speed * (h.rush > 0 ? POWERUPS.rush.speed : 1);
+/**
+ * Patch's passive, Triage: is this hero a Patch walking (mx, my) towards a teammate who is injured? The client asks the
+ * same of its own predicted steps, so this may read nothing but the state and the move.
+ */
+export function triage(s, h, mx, my) {
+  if (h.kind !== 'patch' || !(mx || my)) return false;
+  const T = HEROES.patch.triage, len = Math.hypot(mx, my);
+  // Injured: a living teammate under `below` of their health, wherever they are. One who is down is no patient: there is nothing to Mend.
+  // Towards: within the cone, about 45 degrees either side of the straight line to them, so that circling a fight is not a rush to it.
+  return s.heroes.some((o) => {
+    if (o.team !== h.team || o.i === h.i || !o.alive || o.hp >= o.max * T.below) return false; // by slot: the client asks with a copy of the hero
+    const dx = o.x - h.x, dy = o.y - h.y;
+    return mx * dx + my * dy > T.cone * len * Math.hypot(dx, dy);
+  });
+}
+/** World units a second. With the match and the way the hero is walking it counts Triage too; heroSpeed(h) alone leaves it out. */
+export const heroSpeed = (h, s, mx = 0, my = 0) =>
+  HEROES[h.kind].speed * (h.rush > 0 ? POWERUPS.rush.speed : 1) * (s && triage(s, h, mx, my) ? HEROES.patch.triage.speed : 1);
 
 /**
  * May this hero use its Q or R (key 'q' or 'r') now? Forge's Reforge needs something of its team's in reach to mend.
@@ -645,12 +669,13 @@ function ultimate(s, h) {
 
 function updateHero(s, h, raw, dt) {
   if (h.out) return;
+  const inp = raw && typeof raw === 'object' ? raw : IDLE;
+  if (PINGS.includes(inp.ping)) s.teams[h.team].ping = { kind: inp.ping, ttl: PING_TTL }; // a hero that is down can still call
   if (!h.alive) {
     h.respawn -= dt;
     if (h.respawn <= 0) revive(h, true);
     return;
   }
-  const inp = raw && typeof raw === 'object' ? raw : IDLE;
   const def = HEROES[h.kind];
   h.fireCd = Math.max(-dt, h.fireCd - dt); // may sit one tick below zero so the average fire rate is exact
   h.qCd = Math.max(0, h.qCd - dt);
@@ -674,7 +699,7 @@ function updateHero(s, h, raw, dt) {
     mx /= len;
     my /= len;
   }
-  const speed = heroSpeed(h);
+  const speed = heroSpeed(h, s, mx, my);
   moveHero(s, h, mx * speed * dt, my * speed * dt);
 
   const under = structAt(s, cellOf(h.x), cellOf(h.y));
@@ -718,6 +743,7 @@ function updateStructs(s, dt) {
   for (const T of s.teams) {
     T.overclock = Math.max(0, T.overclock - dt);
     T.aegis = Math.max(0, T.aegis - dt);
+    if (T.ping && (T.ping.ttl -= dt) <= 0) delete T.ping; // gone, not null: a team nobody has called to carries no ping in the snapshot
   }
   for (const st of [...s.structs]) {
     if (st.dead) continue;
@@ -938,6 +964,10 @@ export function startNight(s) {
   s.phase = 'night';
   s.wave++;
   s.timer = 0;
+  if (s.core) { // a capture half done or more is not thrown away by the dusk: the team in the lead, if the progress is its own, is paid in part
+    const c = s.core, D = CORE_DEF, { lead } = coreContestants(s);
+    if (lead >= 0 && lead === c.team && c.prog >= D.captureTime * D.dusk) payCore(s, lead, D.dusk);
+  }
   s.core = null; // nobody took it in time
   if (s.wave % 3 === 0 || (s.endless && s.wave >= 12 && s.wave % 2 === 0)) {
     // s.onlyEclipse is not in a match unless something puts it there: the balance harness does, to play one Eclipse on every Eclipse night.
@@ -971,10 +1001,21 @@ export function coreContestants(s) {
   return { n, teams: n.filter((v) => v > 0).length, lead: top > 0 && n.indexOf(top) === n.lastIndexOf(top) ? n.indexOf(top) : -1 };
 }
 
+/** Pay team k for the Core and take it away: all of it for a capture, `share` of it (and no Rush) for one cut short by the dusk. */
+function payCore(s, k, share = 1) {
+  const D = CORE_DEF, T = s.teams[k];
+  T.scrap += Math.round(D.scrapReward * share);
+  T.ember.hp = Math.min(T.ember.max, T.ember.hp + Math.round(D.emberHeal * share));
+  for (const h of s.heroes) if (h.alive && h.team === k) Object.assign(h, { ult: Math.min(100, h.ult + D.ultGrant * share), rush: share < 1 ? h.rush : Math.max(h.rush, D.rush) });
+  addFx(s, 'capture', s.core.x, s.core.y, D.radius, k);
+  s.core = null;
+}
+
 function updateCore(s, dt) {
   const c = s.core, D = CORE_DEF, { teams, lead } = coreContestants(s);
-  if (lead < 0) { // nobody there, or a tie: what is in it drains away
-    c.prog = Math.max(0, c.prog - (teams ? D.tieDecay : D.decayRate) * dt);
+  if (lead < 0) { // a tie holds what is in it where it is; with nobody there it drains away
+    if (teams) return;
+    c.prog = Math.max(0, c.prog - D.decayRate * dt);
     if (!c.prog) c.team = -1;
     return;
   }
@@ -983,13 +1024,7 @@ function updateCore(s, dt) {
   if (c.team !== k && c.prog > 0) return void (c.prog = Math.max(0, c.prog - (fought ? D.contestedRundown : 1) * dt)); // a rival's progress is run down first
   c.team = k;
   c.prog += (fought ? D.contestedRate : 1) * dt;
-  if (c.prog < D.captureTime) return;
-  const T = s.teams[k];
-  T.scrap += D.scrapReward;
-  T.ember.hp = Math.min(T.ember.max, T.ember.hp + D.emberHeal);
-  for (const h of s.heroes) if (h.alive && h.team === k) Object.assign(h, { ult: Math.min(100, h.ult + D.ultGrant), rush: Math.max(h.rush, D.rush) });
-  addFx(s, 'capture', c.x, c.y, D.radius, k);
-  s.core = null;
+  if (c.prog >= D.captureTime) payCore(s, k);
 }
 
 const alive = (o) => !o.dead;

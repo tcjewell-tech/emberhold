@@ -470,3 +470,18 @@ test('bots on a team with a human leave them the Scrap reserve; a team of bots s
   assert.deepEqual([s.teams[1].scrap, s.structs.filter((st) => st.team === 1).length], [0, 2], 'the all-bot team has spent the lot on two Turrets');
   await a.close();
 });
+
+test('a ping reaches the caller\'s team in the match, and a word the game does not know is dropped', async (t) => {
+  const { port } = await withServer(t);
+  const a = await connect(port);
+  a.send({ t: 'join', slot: AMBER_DART });
+  await a.next((m) => m.t === 'joined', 'joined');
+  const heard = (seq) => a.next((m) => isState(m) && m.acks[AMBER_DART] >= seq, `input ${seq} to be acted on`);
+  a.send({ t: 'input', seq: 1, ping: 'nuke' });
+  assert.ok((await heard(1)).s.teams.every((T) => !('ping' in T)), 'not a call: no team has one');
+  a.send({ t: 'input', seq: 2, ping: 'raid' });
+  const { s } = await heard(2);
+  assert.equal(s.teams[0].ping.kind, 'raid');
+  assert.ok(!('ping' in s.teams[1]) && !('ping' in s.teams[2]), 'only the caller\'s team');
+  await a.close();
+});

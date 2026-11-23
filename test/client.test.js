@@ -27,6 +27,26 @@ test('the preview configs start the real server', () => {
   for (const c of configurations) assert.equal(c.runtimeArgs[0], 'server.js', c.name);
 });
 
+test('the client has a key for every call the sim knows, shows its new keys on the page, and leaves F to scavenging', async () => {
+  const { PINGS } = await import('../public/sim.js');
+  const keyed = client.match(/CALL_KEYS = \{([^}]+)\}/)[1], said = client.match(/CALLS = \{([^}]+)\}/)[1];
+  assert.deepEqual([...keyed.matchAll(/Key\w: '(\w+)'/g)].map((m) => m[1]).sort(), [...PINGS].sort(), 'a key for each call, and no other');
+  for (const kind of PINGS) assert.ok(said.includes(`${kind}:`), `nothing to say for the call "${kind}"`);
+  for (const k of ['T', 'Z', 'X', 'C', '?', 'M', 'F']) assert.ok(page.includes(`<kbd>${k}</kbd>`), `the page does not show the ${k} key`);
+  assert.ok(client.includes("use = keys.has('KeyF')") && client.includes("e.code === 'KeyT'"), 'F scavenges; auto-fire is on T');
+  assert.match(client, /contrast: false, autofire: false, rings: true/, 'the three new settings and what they start as');
+});
+
+test('the master volume is a number from 0 to 1, and only a number in that range changes it', async () => {
+  const { createSound } = await import('../public/sound.js');
+  const sound = createSound();
+  assert.equal(sound.volume(0.4), 0.4);
+  for (const junk of [-0.1, 1.5, NaN, '0.9', null, undefined]) assert.equal(sound.volume(junk), 0.4, `${junk} is not a volume`);
+  assert.equal(sound.volume(0), 0);
+  assert.doesNotThrow(() => sound.play('Build'), 'at volume 0 nothing is played: here, with no audio to play on, that would throw');
+  assert.equal(sound.volume(1), 1);
+});
+
 test('every structure has a build button and every hero\'s gun has a sound', async () => {
   const { STRUCTS, HEROES } = await import('../public/sim.js');
   const { createSound } = await import('../public/sound.js');

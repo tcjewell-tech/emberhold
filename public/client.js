@@ -1,10 +1,10 @@
 // Emberhold browser client: sends this player's input and draws the snapshots the server
 // sends back. No rules live here: canBuild, moveHero and shotHit are the sim's own, imported
 // to colour the build ghost and to predict this player's own steps, shots and builds.
-import { WORLD, CELL, TEAMS, HEROES, HERO_IDS, STRUCTS, ENEMIES, EMBER_R, HERO_R, BUILD_RANGE, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, structAt, TIER2, ECLIPSES, CORE_DEF, coreContestants, ashShield, moveHero, dash, shotHit, heroFireMult, heroSpeed, canCast, inArena, ARENA, POWERUPS, TEAM_SIZE, teamOf } from './sim.js';
+import { WORLD, CELL, TEAMS, HEROES, HERO_IDS, STRUCTS, ENEMIES, EMBER_R, HERO_R, BUILD_RANGE, NO_BUILD_NEAR_RIVAL, SCAV_RANGE, SCAV_TIME, canBuild, buildCost, structAt, TIER2, ECLIPSES, CORE_DEF, coreContestants, ashShield, moveHero, dash, shotHit, heroFireMult, heroSpeed, canCast, inArena, ARENA, POWERUPS, TEAM_SIZE, teamOf } from './sim.js';
 import { interpolate } from './interp.js';
 import { createTimeline, createPredictor, createGunPredictor, createBuildPredictor, createFxPredictor, createUnpacker } from './net.js';
-import { PX, TILE, MOODS, GOLD, ALARM, ground, heroSprite, createArt } from './art.js';
+import { PX, TILE, MOODS, GOLD, ALARM, PIPS, setPalette, ground, heroSprite, createArt } from './art.js';
 import { createSound } from './sound.js';
 import { createTouch } from './touch.js';
 import { botInput, nextPiece } from './bots.js';
@@ -22,6 +22,9 @@ const WHY = {
   down: 'You are down', range: 'Too far away', occupied: 'Occupied', ember: 'Too close to an Ember',
   rival: 'Too close to a rival Ember', unit: 'Something is standing there', scrap: 'Not enough Scrap', bounds: 'Out over the water',
 };
+// A call to the bots on our team: the key that makes it, and what the badge says while it stands.
+const CALL_KEYS = { KeyZ: 'defend', KeyX: 'core', KeyC: 'raid' };
+const CALLS = { defend: 'Bots called home to defend', core: 'Bots called to the Core', raid: 'Bots called to raid' };
 
 let ws, slot = -1, lobby = null, latest = null, humans = [], seq = 0, timeline = createTimeline();
 const key = crypto.getRandomValues(new Uint32Array(4)).join('-'); // proves a reconnecting player is the one who held the seat
@@ -118,6 +121,8 @@ function connect() {
 }
 
 const who = (i) => (i === slot ? 'You' : humans[i] ? 'Player' : 'Bot');
+/** A team's name, led in high contrast by the shape that marks what is its own on the map. */
+const teamName = (k) => (prefs.contrast ? `${PIPS[k]} ` : '') + TEAMS[k].name;
 
 // ---------------------------------------------------------------- screens
 
@@ -128,7 +133,7 @@ function renderSelect() {
     ...TEAMS.map((T, team) => {
       const col = el('div', 'team');
       col.style.setProperty('--team', T.color);
-      col.append(el('h3', '', `Team ${T.name}`));
+      col.append(el('h3', '', `Team ${teamName(team)}`));
       HERO_IDS.forEach((kind, k) => {
         const i = team * TEAM_SIZE + k, d = HEROES[kind], fallen = lobby.out[team];
         const card = el('button', 'card');
@@ -155,7 +160,7 @@ function setupHud() {
     ...TEAMS.map((T, k) => {
       const box = el('div', 'ember'), top = el('span'), bar = el('div', 'bar');
       box.style.setProperty('--team', T.color);
-      top.append(el('b', '', T.name + (k === team ? ' (you)' : '')), el('em', 'num'));
+      top.append(el('b', '', teamName(k) + (k === team ? ' (you)' : '')), el('em', 'num'));
       bar.append(el('i'));
       box.append(top, bar);
       return box;
@@ -181,7 +186,7 @@ function scoreTable(s) {
   const table = el('table'), head = el('tr'), body = el('tbody');
   for (const t of ['Hero', 'Played by', 'Damage', 'Healed or repaired', 'Scrap found', 'AI kills', 'Hero kills', 'Deaths']) head.append(el('th', '', t));
   s.teams.forEach((T, k) => {
-    const title = el('tr', 'teamrow'), cell = el('td', '', `Team ${TEAMS[k].name}${T.alive ? '' : ' (fallen)'}`);
+    const title = el('tr', 'teamrow'), cell = el('td', '', `Team ${teamName(k)}${T.alive ? '' : ' (fallen)'}`);
     title.style.setProperty('--team', TEAMS[k].color);
     cell.colSpan = 8;
     title.append(cell);
@@ -253,7 +258,10 @@ function hear(s) {
       heard.hitAt = now;
       sound.play('Ember hit', 0.8);
     }
-    if (mine.ember.hp < heard.hp) alarmUntil = now + 1500;
+    if (mine.ember.hp < heard.hp) {
+      alarmUntil = now + 1500;
+      badge('Ember under attack', 1500, 'bad');
+    }
     // A teammate's new structure. Our own was heard when we ordered it (see place).
     if (s.structs.some((st) => st.id > heard.id && st.team === team && st.ttl === 0 && !builder.has(st.cx, st.cy))) sound.play('Build', 0.7);
   }
@@ -266,6 +274,16 @@ function say(text) {
   bannerUntil = performance.now() + 3500;
 }
 
+/**
+ * A short badge under the banner for something that is otherwise only heard, so that it reaches a player with the sound
+ * off or who cannot hear it. The same badge again keeps the one that is up for `ms` more, rather than adding another.
+ */
+function badge(text, ms = 4000, cls = '') {
+  const b = [...$('badges').children].find((o) => o.textContent === text) || $('badges').appendChild(el('b', cls, text));
+  clearTimeout(b.timer);
+  b.timer = setTimeout(() => b.remove(), ms);
+}
+
 /** React to changes between snapshots: phase banners, fallen teams, the end screen. */
 function onState(s) {
   if (slot < 0) return;
@@ -273,12 +291,16 @@ function onState(s) {
   if (s.phase !== seen.phase || s.wave !== seen.wave) {
     if (s.phase === 'night') say(s.eclipse ? `Night ${s.wave}, ${ECLIPSES[s.eclipse].name}: ${ECLIPSES[s.eclipse].text}` : `Night ${s.wave}: defend your Ember`);
     else if (s.phase === 'day') say(`Day ${s.wave + 1}: scavenge, build, raid`);
+    if (s.phase === 'night' && s.eclipse) badge(`Eclipse dusk: ${ECLIPSES[s.eclipse].name}`);
   }
+  const call = s.teams[team].ping; // a teammate's call shows here as our own does
+  if (call && call.ttl > (seen.call ?? 0)) badge(CALLS[call.kind], call.ttl * 1000); // its clock has gone up, not down: made, or made again
+  seen.call = call?.ttl;
   s.teams.forEach((T, k) => {
     if (!T.alive && seen.alive[k]) say(k !== team ? `Team ${TEAMS[k].name} has fallen` : touch.used ? 'Your Ember is lost. Tap Q or R to follow the survivors.' : 'Your Ember is lost. Q and E follow the survivors, WASD flies the camera.');
     seen.alive[k] = T.alive;
   });
-  if (s.core && !seen.core) say('Central Core active');
+  if (s.core && !seen.core) badge('Core active');
   seen.core = s.core !== null;
   const left = s.teams.filter((T) => T.alive).length;
   if (s.endless && left === 1 && seen.left > 1 && s.teams[team].alive) say('Yours is the last Ember. Hold out as long as you can.');
@@ -389,7 +411,7 @@ function sendInput(extra) {
   const [mx, my] = moveVec();
   if (extra?.q || extra?.r) cast(extra, mx, my); // before me.sent: a predicted Dash is part of where we say we were
   me.sent(++seq);
-  let fire = mouse.left && !buildType, use = keys.has('KeyF');
+  let fire = (mouse.left || prefs.autofire) && !buildType, use = keys.has('KeyF'); // auto-fire: the trigger stays down by itself
   if (touch.used && latest) {
     // On touch the hero aims, fires and scavenges by itself, picking targets as the bots do, so thumbs are free to move and build.
     const h = latest.heroes[slot], auto = botInput(latest, slot, false);
@@ -484,14 +506,17 @@ addEventListener('keydown', (e) => {
   if (e.repeat) return;
   keys.add(e.code);
   if (e.code === 'KeyM') say(sound.toggle() ? 'Sound off' : 'Sound on'), showSettings();
+  if (e.code === 'KeyT') say(flip('autofire') ? 'Auto-fire on' : 'Auto-fire off'); // F is taken: it scavenges
+  if (e.key === '?') showHelp($('help').hidden);
   if (e.code === 'KeyQ') spectate(-1);
   else if ((e.code === 'KeyE' || e.code === 'Space') && spectate(1)) e.preventDefault();
-  if (e.code === 'Escape') setBuild(null);
+  if (e.code === 'Escape') setBuild(null), showHelp(false);
   else if (/^Digit[1-9]$/.test(e.code)) {
     const type = Object.keys(STRUCTS)[e.code.at(-1) - 1]; // 1 Wall, 2 Turret, 3 Spikes, 4 Shield: the build bar's order
     if (type) setBuild(buildType === type ? null : type);
   }
-  sendInput({ q: e.code === 'KeyQ', r: e.code === 'KeyR' }); // changes go out at once, not on the next 33 ms beat
+  const ping = CALL_KEYS[e.code]; // the badge for it comes back with the snapshot, as it does for a teammate's
+  sendInput({ q: e.code === 'KeyQ', r: e.code === 'KeyR', ...(ping && { ping }) }); // changes go out at once, not on the next 33 ms beat
 });
 addEventListener('keyup', (e) => {
   keys.delete(e.code);
@@ -530,8 +555,11 @@ canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 //   drag: drag from Wall, Turret or Spikes onto the ground; a ghost follows the thumb and it is placed on release.
 //   auto: one Auto-build button places the next piece of the base layout the bot Cog builds.
 let removing = false, dragging = null;
-const prefs = { build: 'drag', shake: !matchMedia('(prefers-reduced-motion: reduce)').matches }; // shake starts off for anyone whose system asks for less motion
+// shake starts off for anyone whose system asks for less motion. contrast: colourblind-safe team colours and a shape for each team.
+// autofire: the gun fires without the mouse button held. rings: the range circles drawn while building.
+const prefs = { build: 'drag', shake: !matchMedia('(prefers-reduced-motion: reduce)').matches, contrast: false, autofire: false, rings: true };
 try { Object.assign(prefs, JSON.parse(localStorage.getItem('emberhold-prefs') || '{}')); } catch { /* defaults */ }
+setPalette(prefs.contrast);
 const touch = createTouch(canvas, {
   building: () => buildType !== null && !dragging,
   point(x, y, down) {
@@ -588,22 +616,72 @@ $('auto').onpointerdown = () => {
 
 function showSettings() {
   for (const b of $('settings').querySelectorAll('[data-build]')) b.classList.toggle('on', b.dataset.build === prefs.build);
-  $('soundSet').textContent = sound.muted() ? 'Sound: off' : 'Sound: on';
-  $('shakeSet').textContent = prefs.shake ? 'Screen shake: on' : 'Screen shake: off';
+  const onOff = (id, label, on, note) => {
+    $(id).textContent = `${label}: ${on ? 'on' : 'off'}`;
+    if (note) $(id).append(el('small', '', note));
+  };
+  onOff('soundSet', 'Sound', !sound.muted());
+  onOff('shakeSet', 'Screen shake', prefs.shake);
+  onOff('contrastSet', 'High contrast', prefs.contrast, `Colourblind-safe team colours, and a shape for each team: ${TEAMS.map((T, k) => `${PIPS[k]} ${T.name}`).join(', ')}`);
+  onOff('fireSet', 'Auto-fire', prefs.autofire, 'Your gun fires without the mouse button held (T)');
+  onOff('ringsSet', 'Build range rings', prefs.rings, 'While building: how far you can build, where rival Embers forbid it, and what the piece will reach');
+  $('volume').value = Math.round(sound.volume() * 100);
+  $('volText').textContent = `${$('volume').value}%`;
   document.body.classList.toggle('autobuild', prefs.build === 'auto');
 }
 $('gear').onclick = () => { $('settings').hidden = !$('settings').hidden; showSettings(); };
 $('settingsDone').onclick = () => ($('settings').hidden = true);
 $('soundSet').onclick = () => { sound.toggle(); showSettings(); };
+$('volume').oninput = () => { sound.volume($('volume').value / 100); showSettings(); };
+$('volume').onchange = () => sound.play('Build'); // let go of the slider: hear how loud that is
 const keep = () => {
   try { localStorage.setItem('emberhold-prefs', JSON.stringify(prefs)); } catch { /* not remembered */ }
   showSettings();
 };
-$('shakeSet').onclick = () => {
-  prefs.shake = !prefs.shake;
-  shake = 0; // stop one that is under way
+/** Turn one on-or-off setting over, remember it, and say what it now is. */
+const flip = (k) => {
+  prefs[k] = !prefs[k];
   keep();
+  return prefs[k];
 };
+$('shakeSet').onclick = () => {
+  shake = 0; // stop one that is under way
+  flip('shake');
+};
+$('fireSet').onclick = () => flip('autofire');
+$('ringsSet').onclick = () => flip('rings');
+$('contrastSet').onclick = () => {
+  setPalette(flip('contrast'));
+  if (lobby) renderSelect(); // both carry team colours and names
+  if (slot >= 0) setupHud();
+};
+
+/** Quick help: the heroes, upgrades, Eclipses and keys on one sheet, written from the sim's own tables so it cannot fall behind them. */
+function showHelp(open) {
+  $('help').hidden = !open;
+  if (!open) return;
+  const line = (lead, text) => {
+    const p = el('p');
+    p.append(el('b', '', lead), ` ${text}`);
+    return p;
+  };
+  const done = el('button', '', 'Close');
+  done.id = 'helpDone';
+  done.onclick = () => showHelp(false);
+  $('help').firstElementChild.replaceChildren(
+    el('h2', '', 'Quick help'),
+    el('h3', '', 'Heroes'),
+    ...Object.values(HEROES).map((d) => line(`${d.name} (${d.role}).`, `Q ${d.q.name}: ${d.q.text}. R ${d.r.name}: ${d.r.text}.${d.passive === 'None' ? '' : ` Passive: ${d.passive}.`}`)),
+    el('h3', '', 'Tier-2 upgrades'),
+    line('Build the same structure again on your own finished one.', `For its cost again it is mended and has ${TIER2} times its health and ${TIER2} times what it does: a Turret's damage, Spikes' damage, a Shield Generator's barrier. Once for each structure; gold corners mark it.`),
+    el('h3', '', 'Eclipses, every third night'),
+    ...Object.values(ECLIPSES).map((E) => line(`${E.name}.`, `${E.text}.`)),
+    el('h3', '', 'Keys'),
+    line('T', 'auto-fire on or off.'), line('Z, X, C', 'call your bots home to defend, to the Core, or to raid, for a few seconds.'), line('M', 'sound on or off.'), line('?', 'this sheet.'),
+    done,
+  );
+}
+$('helpOpen').onclick = () => showHelp(true);
 for (const b of $('settings').querySelectorAll('[data-build]')) b.onclick = () => {
   prefs.build = b.dataset.build;
   keep();
@@ -625,7 +703,7 @@ function follow(dt, s) {
     if (!me.known) me.place(h);
     else {
       // Walk by the sim's own rule, so rival Walls stop the prediction just as they stop the server.
-      const v = h.stun > 0 ? 0 : heroSpeed(h) * dt;
+      const v = h.stun > 0 ? 0 : heroSpeed({ ...h, x: me.x, y: me.y }, latest, mx, my) * dt; // from where we predict ourselves, as Triage asks which way we walk
       me.team = h.team;
       moveHero(latest, me, mx * v, my * v);
       me.settle(dt);
@@ -707,7 +785,9 @@ function drawGhost(X, Y) {
   art.S.R(x, y, TILE, TILE, col);
   ctx.globalAlpha = 1;
   art.S.R(x, y, TILE, 1, col); art.S.R(x, y + TILE - 1, TILE, 1, col); art.S.R(x, y, 1, TILE, col); art.S.R(x + TILE - 1, y, 1, TILE, col);
+  if (!prefs.rings) return;
   art.ring(X(me.x), Y(me.y), BUILD_RANGE * PX, 'rgba(255,255,255,0.4)', { gap: 5 });
+  latest.teams.forEach((T, k) => T.alive && k !== h.team && art.ring(X(T.ember.x), Y(T.ember.y), NO_BUILD_NEAR_RIVAL * PX, 'rgba(255,107,107,0.5)', { gap: 5 })); // no building inside a rival's ring
   const reach = STRUCTS[buildType].range ?? STRUCTS[buildType].radius; // a Turret's gun, a Shield Generator's field
   if (reach) art.ring(x + TILE / 2, y + TILE / 2, reach * PX, 'rgba(125,255,168,0.6)', { gap: 3 });
 }
@@ -774,8 +854,8 @@ function draw(s, now) {
   const home = slot >= 0 && now < alarmUntil ? s.teams[teamOf(slot)].ember : null;
   if (home && !inView(home, 0)) { // our Ember is being hurt out of sight: an arrow at the edge of the open view points the way back
     const dx = home.x - cam.x, dy = home.y - cam.y;
-    // The edge is drawn in from the HUD's panels (their sizes are CSS pixels: left 250, right 40, top 165 with its banner, bottom 190), so no panel covers the arrow.
-    const rx = Math.max(30, W / 2 - (dx < 0 ? 250 : 40) / zoom), ry = Math.max(30, H / 2 - (dy < 0 ? 165 : 190) / zoom);
+    // The edge is drawn in from the HUD's panels (their sizes are CSS pixels: left 250, right 40, top 200 with its banner and badges, bottom 190), so no panel covers the arrow.
+    const rx = Math.max(30, W / 2 - (dx < 0 ? 250 : 40) / zoom), ry = Math.max(30, H / 2 - (dy < 0 ? 200 : 190) / zoom);
     const k = Math.min(rx / Math.abs(dx || 1e-9), ry / Math.abs(dy || 1e-9));
     art.pointer(W / 2 + dx * k, H / 2 + dy * k, Math.atan2(dy, dx), ALARM, now);
   }

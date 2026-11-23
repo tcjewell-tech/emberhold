@@ -10,6 +10,10 @@ const LEASH = 280; // how far from their Ember bots will chase at night
 // BERTH: how much wider a Forge on its way to a repair keeps clear, since it is too slow to step back out in time.
 const BOMB_HP = 30, BOMB_SHARE = 0.16, SHRUG = 0.3, STAY = 0.6, BERTH = 30;
 const AEGIS_WORTH = 0.35; // a Forge spends Aegis when the wave that is landing would cost the squad this share of its health while it lasts
+// The share of its health a medic needs to step into a contested Core, and the lower share it stays on with once the progress
+// there is its team's own. Without the gap it would step out at 54% and back in at 56%, every time it Mended itself.
+const TIP_HP = 0.55, TIP_STAY = 0.4;
+const PICK_NEAR_RING = 80; // how far outside the Core's ring a bot holding it will step for a power-up
 const gap = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
 const MID = { x: (TEAMS[0].x + TEAMS[1].x + TEAMS[2].x) / 3, y: (TEAMS[0].y + TEAMS[1].y + TEAMS[2].y) / 3 };
@@ -164,11 +168,17 @@ export function botInput(s, i, spend = true, reserve = 0) {
   const foe = nearestHostile(s, h.team, h.x, h.y, SIGHT);
   const foeD = foe ? gap(h, foe) : Infinity;
   const hurt = h.hp < h.max * 0.35;
+  // What a player on the team has called for, while the call stands: 'defend' brings every bot home, wherever it is; 'core'
+  // and 'raid' send every roaming bot, the Cog and the Forge too, to the Core (if one stands) or to the Ember the team raids.
+  const call = s.teams[h.team].ping?.kind;
   // By day, anyone close enough to help comes home when something hostile reaches the Ember.
-  const defend = night || (gap(h, em) < 1200 && nearestHostile(s, h.team, em.x, em.y, 450) !== null);
+  const defend = night || call === 'defend' || (gap(h, em) < 1200 && nearestHostile(s, h.team, em.x, em.y, 450) !== null);
 
   // Where to be. A healthy bot with nothing to defend and time to get home roams: builds, raids or scavenges.
-  let goal = post(h.team, HERO_IDS.indexOf(h.kind)), stopAt = 12, wreck = null, fixed = hurt;
+  // Two things send a bot straight to its goal, past the firing band it would otherwise hold round a foe:
+  // transit, on its way to something that matters more than the fight (home when hurt, a patient, a repair), with no detour;
+  // hold, keeping its team's count in the Core's ring, where a power-up beside the ring is still worth the step.
+  let goal = post(h.team, HERO_IDS.indexOf(h.kind)), stopAt = 12, wreck = null, transit = hurt, hold = false;
   const raider = (h.kind === 'anvil' || h.kind === 'dart') && s.wave >= 1;
   // Raiders are far from help, so they turn for home at half health rather than a third.
   const exposed = h.shieldMax > 0 && h.shield === 0 && h.hp < h.max * 0.75; // shield broken: step out and let it refill
@@ -187,41 +197,42 @@ export function botInput(s, i, spend = true, reserve = 0) {
   const inRing = ring ? ring.n[h.team] - (gap(h, s.core) <= CORE_DEF.radius ? 1 : 0) : 0;
   const rivalTop = ring ? Math.max(...ring.n.filter((_, k) => k !== h.team)) : 0;
   // A medic can tip it: where its teammates in the ring do not lead without it but would tie or lead with it, it goes in
-  // and stands there, healing from inside, unless a teammate elsewhere is nearly gone.
-  const tip = h.kind === 'patch' && inRing > 0 && inRing <= rivalTop && inRing + 1 >= rivalTop && !(patient && patient.hp < patient.max * 0.3);
+  // and stands there, healing from inside, unless a teammate elsewhere is nearly gone. It stands just inside the rim, as far
+  // from the fight as it can be and still count, and only with the health to take what reaches it there (TIP_HP, TIP_STAY).
+  const tip = h.kind === 'patch' && inRing > 0 && inRing <= rivalTop && inRing + 1 >= rivalTop
+    && h.hp >= h.max * (s.core.team === h.team ? TIP_STAY : TIP_HP) && !(patient && patient.hp < patient.max * 0.3);
   if (tip) {
     goal = s.core;
-    stopAt = CORE_DEF.radius * 0.5;
-    fixed = true; // it holds its place in the ring: backing off to its gun's range would take it out and give the lead away
+    stopAt = CORE_DEF.radius * 0.85;
+    hold = true; // backing off to its gun's range would take it out of the ring and give the lead away
   } else if (patient || broken) {
     goal = patient || broken; // a medic's first job is to get Mend in reach of whoever needs it most; a Forge's, Reforge
     stopAt = def.q.r * 0.6;
-    fixed = true;
+    transit = true;
   } else if (hurt && defend && medic) {
     goal = medic; // badly hurt in a fight: fall back to the medic rather than trade shots
     stopAt = HEROES.patch.q.r * 0.6;
   } else if (outmatched) {
-    fixed = true; // straight home to its post, shooting back but not stopping to duel
+    transit = true; // straight home to its post, shooting back but not stopping to duel
   } else if (roam) {
-    const piece = spend && h.kind === 'cog' ? nextPiece(s, h, reserve) : null;
+    const piece = spend && h.kind === 'cog' && !call ? nextPiece(s, h, reserve) : null;
     // The Dart leads the raid. An Anvil goes only as its bodyguard: alone it is too slow to get back out.
     const lead = h.kind === 'anvil' ? mates.find((o) => o.kind === 'dart') : null;
-    const rival = raider && (lead || h.kind === 'dart') ? raidTarget(s, h) : null;
+    const rival = call === 'raid' || (raider && (lead || h.kind === 'dart')) ? raidTarget(s, h) : null;
     // While the Core stands it is worth more than a raid: the Dart and the Anvil go and hold it, and the medic joins them once one is there.
-    const core = s.core && (raider || (h.kind === 'patch' && mates.some((o) => gap(o, s.core) < CORE_DEF.radius * 2))) ? s.core : null;
+    const core = s.core && call !== 'raid' && (call === 'core' || raider || (h.kind === 'patch' && mates.some((o) => gap(o, s.core) < CORE_DEF.radius * 2))) ? s.core : null;
     if (piece) {
       goal = em; // every blueprint cell is in build range from the Ember itself
       if (piece.ready) out.build = { type: piece.type, cx: piece.cx, cy: piece.cy };
     } else if (core) {
       goal = core;
-      // Two or more of one rival team hold the ring and no teammate is near: a raider stands off at its gun's reach and
-      // shoots, rather than walk in alone to be outnumbered.
-      const lost = ring.lead >= 0 && ring.lead !== h.team && ring.n[ring.lead] >= 2 && !mates.some((o) => gap(o, core) < CORE_DEF.radius * 2.5);
-      stopAt = raider && lost ? gun.range * 0.85 : CORE_DEF.radius * 0.5;
+      stopAt = CORE_DEF.radius * 0.5;
       // The Anvil is the hero built to stand its ground: it walks into the ring and holds it against whoever comes, where the
-      // others back off to their guns' range, and so out of it. It gives the ring up as any raider does: outnumbered with no
-      // teammate near (lost), its shield broken, or hurt enough to turn for home.
-      if (h.kind === 'anvil' && !lost) fixed = true;
+      // others back off to their guns' range, and so out of it. It gives the ring up as any raider does: its shield broken,
+      // hurt enough to turn for home, or lost: two or more of one rival team hold the ring and no teammate is near. An Anvil
+      // that held then would walk in alone to be outnumbered; without it, it fights them from its gun's range as anyone does.
+      const lost = ring.lead >= 0 && ring.lead !== h.team && ring.n[ring.lead] >= 2 && !mates.some((o) => gap(o, core) < CORE_DEF.radius * 2.5);
+      hold = h.kind === 'anvil' && !lost;
     } else if (rival) {
       goal = rival;
       stopAt = gun.range * 0.85;
@@ -238,7 +249,7 @@ export function botInput(s, i, spend = true, reserve = 0) {
 
   // A power-up close by is worth a short detour, unless the bot is busy healing or hurt and heading for help.
   const pick = (s.pickups || []).filter((p) => gap(h, p) < 260 && (!night || gap(p, em) < LEASH + 100)).sort((a, c) => gap(h, a) - gap(h, c))[0];
-  if (pick && !fixed) {
+  if (pick && !transit && (!hold || gap(pick, s.core) < CORE_DEF.radius + PICK_NEAR_RING)) {
     goal = pick;
     stopAt = 0;
   }
@@ -253,13 +264,13 @@ export function botInput(s, i, spend = true, reserve = 0) {
 
   // How to move: hold a firing band around a foe worth fighting, or around a Turret we outrange; otherwise head for the goal.
   let to = goal;
-  if (fixed) to = goal;
+  if (transit || hold) to = goal;
   else if (foe && (defend || (roam && foeD < gun.range * 1.1))) {
     stopAt = 12;
     if (foeD > gun.range * 0.8) to = foe;
     else if (foeD < gun.range * 0.45) to = { x: 2 * h.x - foe.x, y: 2 * h.y - foe.y };
     else to = h;
-    if (night && gap(h, em) > LEASH) to = goal;
+    if ((night || call === 'defend') && gap(h, em) > LEASH) to = goal; // called home from far off, it comes rather than fight where it stands
   } else if (turret && roam && gun.range > STRUCTS.turret.range + 20) {
     const d = gap(h, turret);
     stopAt = 0;

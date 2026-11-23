@@ -7,7 +7,7 @@ import { networkInterfaces, hostname } from 'node:os';
 import { isIP } from 'node:net';
 import { createDeflateRaw, constants } from 'node:zlib';
 import { WebSocketServer } from 'ws';
-import { createGame, step, snapshot, STRUCTS, TEAMS, TEAM_SIZE, teamOf } from './public/sim.js';
+import { createGame, step, snapshot, STRUCTS, TEAMS, TEAM_SIZE, PINGS, teamOf } from './public/sim.js';
 import { botInput, RESERVE } from './public/bots.js';
 
 const PUBLIC = join(import.meta.dirname, 'public');
@@ -28,6 +28,7 @@ function readInput(m, seat) {
   if (m.shoot === true) seat.shots = Math.min(seat.shots + 1, VOLLEYS);
   if (m.q === true) seat.q = true;
   if (m.r === true) seat.r = true;
+  if (PINGS.includes(m.ping)) seat.ping = m.ping; // a call to the team's bots: one of three known words, or it is dropped
   if (Number.isSafeInteger(m.seq) && m.seq > 0) seat.seq = m.seq; // echoed in snapshots so the client can tell lag from error
   if (seat.orders.length >= 32) return;
   const build = cell(m.build), remove = cell(m.remove);
@@ -99,7 +100,7 @@ export async function startServer({
   grace = 60, beat = 5000, maxClients = 40, lag = 0, jitter = 0, anyHost = false,
 } = {}) {
   let game = null, idle = null;
-  const seats = new Map(); // hero slot -> { ws, key, held, q, r, seq, orders } for each human player
+  const seats = new Map(); // hero slot -> { ws, key, held, q, r, ping, seq, orders } for each human player
   const known = (req) => anyHost || ownHost(req.headers.host);
 
   const http = createServer(async (req, res) => {
@@ -149,7 +150,7 @@ export async function startServer({
     clearTimeout(idle);
     game ??= Object.assign(newGame(seed++), { endless: endless === true }); // whoever starts the match picks its mode
     ws.slot = slot;
-    seats.set(slot, { ws, key, held: {}, q: false, r: false, shots: 0, seq: 0, orders: [] });
+    seats.set(slot, { ws, key, held: {}, q: false, r: false, ping: null, shots: 0, seq: 0, orders: [] });
     send(ws, { t: 'joined', slot });
     tellAll();
   }
@@ -217,8 +218,9 @@ export async function startServer({
       const seat = seats.get(h.i);
       if (!seat) return botInput(game, h.i, true, crewed.has(h.team) ? RESERVE : 0); // bots build on every team, but leave a human's team its reserve
       if (!h.alive || h.stun > 0 || game.phase === 'over') seat.shots = 0; // it cannot fire: what it asked for lapses, and does not go off when it gets up
-      const inp = { ...seat.held, fire: seat.shots > 0, q: seat.q, r: seat.r, ...seat.orders.shift() };
+      const inp = { ...seat.held, fire: seat.shots > 0, q: seat.q, r: seat.r, ping: seat.ping, ...seat.orders.shift() };
       seat.q = seat.r = false;
+      seat.ping = null;
       return inp;
     });
     step(game, inputs, TICK);

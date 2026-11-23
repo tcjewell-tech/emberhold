@@ -78,23 +78,44 @@ every second night from night 12.
 | Blood Moon | AI enemies move 25% faster and notice heroes from 60% further off |
 | Iron Tide | Twice the Breakers, and AI enemies do 25% more damage to structures (not to Embers) |
 | Ash Storm | Turrets and Sentries see three quarters as far, and AI enemies arrive with a shield that goes before their health: 34 points on night 3, 46 on night 6, and more each night |
-| Volatile | An AI enemy bursts when it dies, hurting heroes, structures and other AI enemies within 75 units (not Embers): 24 damage on night 3, 28 on night 6, and a little more each night. It pays 1 more Scrap |
+| Volatile | An AI enemy bursts when it dies, hurting heroes and structures within 75 units (not Embers): 24 damage on night 3, 28 on night 6, and a little more each night. Other AI enemies in reach take 45% of that, so packs still go off in chains but a wave does not clear itself. An AI enemy your team kills pays 1 more Scrap; one that dies to a burst pays the usual |
 
 ## The Core
 
 On every other day from the second (days 2, 4, 6 and so on), a Core appears in the middle of
 the map 12 seconds into the day. Stand a hero in its ring with no rival there and it fills in
 6 seconds. With rivals in the ring too, numbers decide: the team with the most heroes there
-still fills it, at under half the pace, and equal numbers drain it slowly. A team that takes
+still fills it, at under half the pace, and equal numbers hold it where it is. A team that takes
 the ring over must first run down what a rival put in. The team that takes the Core gets 45
 Scrap, 120 health back on its Ember, and 35% Ultimate charge and 6 seconds of Rush for each
-of its living heroes. It goes at dusk if nobody has taken it. The days between have no Core:
-they are for raiding.
+of its living heroes. It goes at dusk if nobody has taken it; a team that is leading the ring
+then, with its own progress at least half way, is paid half (and no Rush). The days between
+have no Core: they are for raiding.
+
+## Calling your bots
+
+Z, X and C call the bots on your team: home to defend, to the Core, or to raid the Ember your
+team would raid. A call stands for 8 seconds, shows as a badge to everyone on your team, and
+moves every bot that is free to roam, the Cog and the Forge too; press again to keep it up.
+A bot that is hurt or already defending finishes that first. Keyboard only for now.
 
 ## Base alarm
 
 When your own Ember is hit, its bar at the top of the screen is outlined in red for a moment.
 If the Ember is off your screen, a red arrow at the edge of the view points the way home.
+
+What the game says in sound it also says in a short badge under the banner: "Ember under attack",
+"Core active", and "Eclipse dusk" with the Eclipse's name.
+
+## Settings
+
+The Settings button has, besides the touch build style: **Master volume**, **Sound** (also M),
+**Screen shake**, **High contrast** (team colours people who cannot tell red from green can
+tell apart, and a shape for each team on its heroes, structures and Ember: ▲ Amber, ■ Azure,
+● Jade), **Auto-fire** (your gun fires without the mouse button held; also T), **Build range
+rings** (the circles drawn while building: how far you can build, where rival Embers forbid it,
+and what the piece will reach) and **Quick help** (also ?), a one-page reference to the heroes,
+upgrades and Eclipses. They are remembered on that computer.
 
 ## Upgrades
 
@@ -110,6 +131,8 @@ and on a team with a human they leave 35 Scrap in the pool for the humans to spe
 A **Shield Generator** (35 Scrap) starts working 2 seconds after you place it. Friendly heroes
 within its ring carry a 50-point barrier that takes damage before their health does; it
 refills after 4 seconds without being hit and is lost on walking out of the ring.
+
+**Patch**, the medic, has **Triage**: it walks 20% faster towards an injured teammate.
 
 **Forge** is the fifth hero on each team, a slow support. It carries the same
 shield field for itself and teammates beside it. **Reforge** (Q) repairs your Walls, Turrets
@@ -129,6 +152,9 @@ and Shield Generators around it; **Aegis** (R) halves the damage your whole team
 | Tab (hold) | Scoreboard |
 | Q / E, Space or left-click (once your Ember is lost) | Follow the previous / next Ember or hero still in the match; W A S D flies the camera freely again |
 | M | Sound on or off |
+| T | Auto-fire on or off |
+| Z / X / C | Call your bots: defend / Core / raid |
+| ? | Quick help |
 
 ## Test
 

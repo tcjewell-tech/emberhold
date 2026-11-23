@@ -15,6 +15,18 @@ export const MOODS = [
   { name: 'Dusk', g: '#c2b2cf', hi: '#eedadb', lo: '#9f90ba', det: '#8172a2', water: '#3b2f5c', panel: '#281f3e', panel2: '#382b54', edge: '#8068a8', night: '26,14,54', warm: '#eccdb5' },
 ];
 
+// High contrast: team colours that people who cannot tell red from green can still tell apart, and a shape for each team
+// (PIPS, in team order) drawn on whatever is that team's, so that colour is never the only sign.
+const PLAIN = TEAMS.map((T) => T.color), CONTRAST = ['#ffb347', '#56b4e9', '#e66199'];
+export const PIPS = ['▲', '■', '●'];
+let marked = false;
+/** Turn high contrast on or off. The colours are TEAMS' own in sim.js, which no rule reads: everything drawn after this wears the new ones. */
+export function setPalette(contrast) {
+  marked = contrast === true;
+  TEAMS.forEach((T, k) => (T.color = (marked ? CONTRAST : PLAIN)[k]));
+  cache.clear(); // sprites are painted once in their team's colour
+}
+
 const rgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
 const mix = (a, b, t) => { const A = rgb(a), B = rgb(b); return '#' + A.map((v, i) => Math.round(v + (B[i] - v) * t).toString(16).padStart(2, '0')).join(''); };
 const lit = (c, t) => (t > 0 ? mix(c, '#fff4e0', t) : mix(c, '#141a33', -t)); // lighter leans warm, darker leans blue
@@ -173,8 +185,16 @@ export function createArt(g) {
     for (let k = 5; k < len; k++) S.R(x + Math.cos(aim) * k - thick / 2, hy + Math.sin(aim) * k - thick / 2, thick, thick, INK);
     for (let k = 5; k < len - 1; k++) S.R(x + Math.cos(aim) * k - 0.5, hy + Math.sin(aim) * k - 1, thick - 2, 1, k > len - 4 ? '#c3ccdb' : STEEL);
   }
+  /** A team's shape, 5 art pixels across and centred on (x, y): Amber's triangle, Azure's square, Jade's disc. Drawn only in high contrast. */
+  function pip(team, x, y) {
+    if (!marked) return;
+    S.R(x - 3, y - 3, 7, 7, INK);
+    if (team === 0) [1, 3, 5].forEach((w, j) => S.R(x - (w - 1) / 2, y - 2 + j * 2 - (j ? 1 : 0), w, j ? 2 : 1, '#ffffff'));
+    else if (team === 1) S.R(x - 2, y - 2, 5, 5, '#ffffff');
+    else { S.R(x - 1, y - 2, 3, 5, '#ffffff'); S.R(x - 2, y - 1, 5, 3, '#ffffff'); }
+  }
   return {
-    S, meter, ring,
+    S, meter, ring, pip,
     /** x, y: where the hero's feet are. h is the hero from the snapshot. */
     hero(h, x, y, aim, { walking, mine, t, aegis }) {
       const T = TEAMS[h.team].color;
@@ -189,6 +209,7 @@ export function createArt(g) {
       if (Math.sin(aim) >= 0) gun(h.kind, x, y, aim);
       if (h.stun > 0) for (let k = 0; k < 3; k++) { const a = t / 200 + k * 2.1; S.R(x + Math.cos(a) * 9 - 1, y - 30 + Math.sin(a) * 3, 2, 2, '#9fd0ff'); }
       meter(x - 9, y - 36, 18, h.hp / h.max, T);
+      pip(h.team, x - 15, y - 35);
       if (h.shieldMax) { const w = Math.round(18 * h.shield / h.shieldMax); S.R(x - 10, y - 40, 20, 3, INK); S.R(x - 9, y - 39, w, 1, '#bfe9ff'); }
       if (mine) { S.R(x - 2, y - (h.shieldMax ? 47 : 44), 5, 3, INK); S.R(x - 1, y - (h.shieldMax ? 46 : 43), 3, 1, '#ffffff'); S.R(x, y - (h.shieldMax ? 45 : 42), 1, 2, '#ffffff'); }
     },
@@ -215,6 +236,7 @@ export function createArt(g) {
       for (let i = 0; i < 20; i += 2) if (hash(st.cx * 20 + i, st.cy) < 0.55) S.R(x + i, y - 1, 2, hash(st.cx * 20 + i, st.cy + 1) < 0.4 ? 3 : 2, '#f4f8fb');
       if (hurt < 0.75) { S.R(x + 8, y + 1, 1, 5, INK); S.R(x + 9, y + 5, 1, 5, INK); S.R(x + 7, y + 4, 1, 1, INK); }
       if (hurt < 0.45) { S.R(x + 10, y + 9, 1, 8, INK); S.R(x + 11, y + 12, 2, 1, INK); S.R(x + 14, y + 2, 1, 4, INK); S.R(x + 4, y + 10, 1, 6, INK); }
+      pip(st.team, x + 10, y + 7);
     },
     spikes(st, x, y) {
       const T = TEAMS[st.team].color, left = Math.ceil(6 * st.hp / st.max);
@@ -222,6 +244,7 @@ export function createArt(g) {
       [[4, 9], [10, 8], [15, 10], [7, 14], [13, 15], [3, 15]].slice(0, left).forEach(([i, j]) => { // blades wear away as it is used up
         S.R(x + i - 1, y + j - 1, 3, 2, INK); S.R(x + i, y + j - 4, 1, 4, INK); S.R(x + i - 1, y + j - 3, 1, 3, '#dfe6f0'); S.R(x + i, y + j - 1, 1, 1, STEEL);
       });
+      pip(st.team, x + 16, y + 5);
     },
     /** The mark of an upgraded structure: gold brackets on the four corners of its tile. */
     tier2(x, y) {
@@ -240,6 +263,7 @@ export function createArt(g) {
       for (let k = 4; k < 15; k++) S.R(cx + Math.cos(st.aim) * k - 2, cy - 2 + Math.sin(st.aim) * k * 0.8 - 2, 4, 4, INK);
       for (let k = 4; k < 14; k++) S.R(cx + Math.cos(st.aim) * k - 1, cy - 2 + Math.sin(st.aim) * k * 0.8 - 1, 2, 1, '#c3ccdb');
       S.E(cx, cy - 1, 7, 7, INK); S.ball(cx, cy - 1, 6, 6, T);
+      pip(st.team, cx, cy - 1);
       if (st.hp < st.max) meter(x + 2, y + 21, 16, st.hp / st.max, T, 2);
     },
     /** A working Shield Generator's field: a faint disc on the ground with a slowly turning dotted rim. */
@@ -255,6 +279,7 @@ export function createArt(g) {
       S.E(cx, cy + 4, w / 2 + 1, 5, INK); S.E(cx, cy + 3, w / 2, 4, lit(STEEL, -0.35)); S.E(cx, cy + 2, w / 2, 3.5, STEEL);
       S.R(cx - 2, cy - 5, 4, 7, INK); S.R(cx - 1, cy - 5, 2, 7, lit(STEEL, 0.2));
       S.E(cx, cy - 8, 6, 6, INK); S.ball(cx, cy - 8, 5, 5, on ? T : '#6b7390');
+      pip(st.team, cx, cy + 3);
       if (!on) return meter(x + 2, y + 21, 16, 1 - st.wait / D.buildTime, '#ffffff', 2);
       this.glow(cx, cy - 8, 14, T, 0.45);
       if (st.hp < st.max) meter(x + 2, y + 21, 16, st.hp / st.max, T, 2);
@@ -281,6 +306,7 @@ export function createArt(g) {
       shadow(x, y + 9, 24);
       S.E(x, y + 5, 21, 10, INK); S.E(x, y + 5, 20, 9, '#4b4f66'); S.E(x, y + 3, 20, 8, '#8a8fa8'); S.E(x - 4, y + 1, 10, 2.5, '#b4b9cc'); S.E(x, y + 3, 15, 5, '#2b1a1c');
       for (let a = 0; a < 6; a++) S.R(x - 18 + a * 7, y + 9 - Math.abs(a - 2.5) * 1.2, 3, 2, T);
+      pip(k, x - 27, y + 20);
       if (!alive) { for (let c = 0; c < 6; c++) S.R(x - 9 + c * 3.4, y + 2 + hash(c, 3) * 3, 2, 1, '#55505a'); return; }
       for (let c = 0; c < 9; c++) S.R(x - 11 + c * 2.6 + hash(c, f) * 2, y + 2 + hash(c, 3) * 3, 2, 1, hash(c, f + 9) < 0.5 ? T : lit(T, 0.5));
       const size = 0.45 + 0.55 * frac;

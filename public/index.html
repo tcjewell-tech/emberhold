@@ -75,6 +75,10 @@
   #minimap { bottom: 12px; left: 12px; border: 4px solid var(--line); box-shadow: 4px 4px 0 var(--line); background: #151a2c; image-rendering: pixelated; }
   #banner { top: 104px; left: 50%; transform: translateX(-50%); font: 700 var(--m) var(--pix); color: var(--gold); text-align: center; pointer-events: none; transition: opacity 0.4s; background: var(--panel); border: 4px solid var(--line); box-shadow: inset 0 0 0 2px var(--edge), 4px 4px 0 var(--line); padding: 8px 16px; text-shadow: var(--hard); }
   #banner:empty { display: none; }
+  /* what a sound says, said in words too: short badges under the banner */
+  #badges { top: 158px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; pointer-events: none; }
+  #badges b { background: var(--well); border: 2px solid var(--line); box-shadow: inset 0 0 0 2px var(--gold); color: var(--gold); padding: 4px 10px; text-shadow: var(--hard); white-space: nowrap; }
+  #badges b.bad { box-shadow: inset 0 0 0 2px var(--bad); color: var(--bad); }
   #hint { bottom: 88px; left: 50%; transform: translateX(-50%); color: var(--text); text-shadow: var(--rim); pointer-events: none; text-align: center; }
 
   /* ---- overlays */
@@ -130,7 +134,15 @@
   #settings button small { display: block; color: var(--dim); font: 400 var(--s) var(--plain); text-shadow: none; margin-top: 4px; }
   #settings button.on { border-color: var(--gold); background: #3a3210; }
   .choices { display: grid; gap: 8px; }
-  #settingsDone { background: var(--gold) !important; color: var(--line) !important; text-shadow: none !important; font-weight: 700 !important; border-color: var(--line) !important; text-align: center !important; }
+  #settingsDone, #helpDone { background: var(--gold) !important; color: var(--line) !important; text-shadow: none !important; font-weight: 700 !important; border-color: var(--line) !important; text-align: center !important; }
+  #volRow { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; }
+  #volRow input { grid-column: 1 / -1; width: 100%; accent-color: var(--gold); }
+  body.touch #fireSet { display: none; } /* on touch the gun fires by itself already */
+  #help .sheet { gap: 8px; }
+  #help h3 { color: var(--gold); margin-top: 6px; }
+  #help p { color: var(--dim); font: 400 var(--s)/1.5 var(--plain); text-shadow: none; }
+  #help p b { color: var(--text); }
+  #helpDone { font: 700 var(--s) var(--pix); border: 2px solid; padding: 12px; cursor: pointer; }
   #touchtip { color: var(--dim); }
   .stick { position: fixed; width: 110px; height: 110px; margin: -55px 0 0 -55px; border: 4px solid #ffffff; outline: 3px solid var(--line); box-shadow: inset 0 0 0 3px var(--line); border-radius: 50%; pointer-events: none; opacity: 0.35; }
   .stick i { position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; margin: -22px; border-radius: 50%; background: #ffffff; border: 3px solid var(--line); }
@@ -176,6 +188,7 @@
   </div>
   <canvas id="minimap" width="180" height="170"></canvas>
   <div id="banner" role="status" aria-live="polite"></div>
+  <div id="badges" role="status" aria-live="polite"></div>
   <div id="hint"></div>
 </div>
 <div id="stick" class="stick" hidden><i></i></div>
@@ -202,6 +215,9 @@
       <span>hold <kbd>Tab</kbd> scoreboard</span>
       <span>Ember lost: <kbd>Q</kbd><kbd>E</kbd> follow the survivors</span>
       <span><kbd>M</kbd> sound on or off</span>
+      <span><kbd>T</kbd> auto-fire on or off</span>
+      <span><kbd>Z</kbd><kbd>X</kbd><kbd>C</kbd> call your bots: defend, Core, raid</span>
+      <span><kbd>?</kbd> quick help</span>
     </div>
   </div>
 </section>
@@ -224,11 +240,17 @@
       <button data-build="drag">Drag to place<small>Drag Wall, Turret, Spikes or Shield onto the ground</small></button>
       <button data-build="auto">Auto-build<small>One button builds the next piece of a ready-made base</small></button>
     </div>
+    <label id="volRow">Master volume<b id="volText" class="num"></b><input type="range" id="volume" min="0" max="100" step="5"></label>
     <button id="soundSet"></button>
     <button id="shakeSet"></button>
+    <button id="contrastSet"></button>
+    <button id="fireSet"></button>
+    <button id="ringsSet"></button>
+    <button id="helpOpen">Quick help</button>
     <button id="settingsDone">Done</button>
   </div>
 </section>
+<section id="help" class="overlay" hidden><div class="sheet panel" style="width:min(820px,100%)"></div></section>
 <div id="offline" hidden>Connection lost. Reconnecting…</div>
 <script>
   // Say so on screen when the game breaks: on a phone there is no console to look at.
