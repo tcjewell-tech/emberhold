@@ -9,7 +9,8 @@
     "lan": "node server.js --lan",
     "test": "node --test \"test/*.test.js\"",
     "balance": "node test/balance.test.js 60",
-    "balance:endless": "node test/balance.test.js endless 12"
+    "balance:endless": "node test/balance.test.js endless 12",
+    "bundle": "node scripts/bundle-review.mjs"
   },
   "dependencies": {
     "ws": "^8.22.2"
